@@ -54,11 +54,6 @@
   const avatar = (name = "You", colour = "pink") => `<span class="avatar ${colour}">${esc(String(name || "You").slice(0, 1).toUpperCase())}</span>`;
 
   /* ---------- local "backend" ---------- */
-  const FRIENDS = [
-    { id: "sarah", display_name: "Sarah", username: "sarah", bio: "Matcha, sunsets and long walks ♡" },
-    { id: "emma", display_name: "Emma", username: "emma", bio: "Always up for a slow afternoon." },
-    { id: "alex", display_name: "Alex", username: "alex", bio: "" },
-  ];
 
   /* ---------- Supabase backend ----------
      Accounts live in Supabase Auth. Each account's corner (profile, settings,
@@ -152,97 +147,128 @@
     save();
   }
 
+  /* ---------- shared data: profiles, friendships, moments ----------
+     These live in their own Supabase tables so other people can see them.
+     Inside the app, your own id is written as "me" so the page code stays simple. */
+  let social = { friendships: [], profiles: {}, moments: [] };
+  const myId = () => db.user?.id;
+  const toMe = (id) => (id === myId() ? "me" : id);
+  const fromMe = (id) => (id === "me" ? myId() : id);
+  const otherOf = (f) => (f.requester_id === "me" ? f.recipient_id : f.requester_id);
+  const SAFE_IMG = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+
+  /* make sure your public profile exists and matches your corner; usernames must be unique */
+  async function syncProfile() {
+    if (!db.user) return;
+    const p = db.profile;
+    let username = p.username;
+    for (let i = 0; i < 5; i++) {
+      const { error } = await sb.from("profiles").upsert({ id: myId(), username, display_name: (p.display_name || "Friend").slice(0, 60), bio: (p.bio || "").slice(0, 250) });
+      if (!error) break;
+      if (error.code !== "23505" || i === 4) throw error;
+      username = `${p.username.slice(0, 25)}_${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+    if (username !== p.username) {
+      p.username = username;
+      db.user.username = username;
+      save();
+    }
+  }
+
+  async function loadSocial() {
+    if (!db.user) return;
+    const withImages = PAGE === "moments";
+    const [fr, mo] = await Promise.all([
+      sb.from("friendships").select("id, requester_id, recipient_id, status, created_at"),
+      sb
+        .from("moments")
+        .select(withImages ? "id, user_id, caption, mood, image, audience, created_at" : "id, user_id, caption, mood, audience, created_at")
+        .order("created_at", { ascending: false })
+        .limit(withImages ? 40 : 10),
+    ]);
+    if (fr.error) throw fr.error;
+    if (mo.error) throw mo.error;
+    const ids = new Set();
+    fr.data.forEach((f) => ids.add(f.requester_id).add(f.recipient_id));
+    mo.data.forEach((m) => ids.add(m.user_id));
+    ids.delete(myId());
+    const profiles = {};
+    if (ids.size) {
+      const pr = await sb.from("profiles").select("id, username, display_name, bio").in("id", [...ids]);
+      if (pr.error) throw pr.error;
+      pr.data.forEach((p) => (profiles[p.id] = p));
+    }
+    social = {
+      profiles,
+      friendships: fr.data.map((f) => ({ ...f, requester_id: toMe(f.requester_id), recipient_id: toMe(f.recipient_id) })),
+      moments: mo.data.map((m) => ({ ...m, user_id: toMe(m.user_id), image: m.image && SAFE_IMG.test(m.image) ? m.image : null })),
+    };
+  }
+
+  /* run a Supabase change, then reload friends/moments and redraw */
+  async function socialChange(run, okMsg) {
+    try {
+      const { error } = await run();
+      if (error) throw error;
+      await loadSocial();
+      render();
+      if (dlg) renderDialog();
+      if (okMsg) toast(okMsg);
+    } catch (err) {
+      toast(err?.message || "Couldn’t do that just now. Please try again.");
+    }
+  }
+
+  /* after sign-in or on page load: corner, then profile, then friends and moments */
+  async function loadEverything(authUser) {
+    await loadCorner(authUser);
+    try {
+      await syncProfile();
+      await loadSocial();
+    } catch (e) {
+      toast("Couldn’t load your friends just now. Try refreshing.");
+    }
+  }
+
+  /* a brand-new corner: real friends and moments now live in Supabase, so no sample people */
   function seedFor(user) {
-    const now = Date.now();
-    const H = 36e5;
     return {
       user,
       profile: { id: "me", display_name: user.name, username: user.username, bio: "", location: "", mood: "" },
       settings: { share_availability: true, notifications_enabled: true },
-      since: now,
-      friendships: [
-        { id: "f-sarah", requester_id: "sarah", recipient_id: "me", status: "accepted" },
-        { id: "f-emma", requester_id: "me", recipient_id: "emma", status: "accepted" },
-        { id: "f-alex", requester_id: "alex", recipient_id: "me", status: "pending" },
-      ],
+      since: Date.now(),
+      friendships: [],
       blocks: [],
       slots: [],
-      letters: [
-        {
-          id: "l-sarah",
-          sender_id: "sarah",
-          recipient_id: "me",
-          title: "Just thinking of you",
-          body: "Just a reminder that you make my days a little brighter. ♡",
-          stationery: "lavender",
-          open_when: null,
-          created_at: new Date(now - 3 * H).toISOString(),
-          opened_at: null,
-          saved: false,
-        },
-      ],
-      moments: [
-        { id: "m-sarah", user_id: "sarah", caption: "a little matcha moment 🍵", mood: "happy", image: "cafe", created_at: new Date(now - 2 * H).toISOString() },
-        { id: "m-emma", user_id: "emma", caption: "stopped to smell the flowers 🌷", mood: "cozy", image: null, created_at: new Date(now - 4 * H).toISOString() },
-      ],
-      invites: [
-        {
-          id: "i-emma",
-          sender_id: "emma",
-          recipient_id: "me",
-          starts_at: new Date(new Date().setHours(48 + 12, 30, 0, 0)).toISOString(),
-          ends_at: new Date(new Date().setHours(48 + 12, 55, 0, 0)).toISOString(),
-          location: "Tiong Bahru",
-          status: "pending",
-        },
-      ],
+      letters: [],
+      moments: [],
+      invites: [],
       notifications: [
-        { id: "n1", body: "Sarah left you a little letter 💌", created_at: new Date(now - 3 * H).toISOString(), read_at: null },
-        { id: "n2", body: "Alex would love to be friends ♡", created_at: new Date(now - 5 * H).toISOString(), read_at: null },
-        { id: "n3", body: "Emma suggested a little catch-up ☕", created_at: new Date(now - 6 * H).toISOString(), read_at: null },
+        { id: "welcome", body: `Welcome! Your username is @${user.username}. Share it so friends can find you ♡`, created_at: new Date().toISOString(), read_at: null },
       ],
-      messages: [
-        { id: "msg1", sender_id: "sarah", recipient_id: "me", body: "hii! free for a quick coffee this week? ☕", created_at: new Date(now - 90 * 6e4).toISOString() },
-        { id: "msg2", sender_id: "emma", recipient_id: "me", body: "saw the cutest café near Tiong Bahru, we have to go 🌼", created_at: new Date(now - 30 * 6e4).toISOString() },
-      ],
+      messages: [],
     };
   }
 
-  /* friends' free time is generated fresh each visit so it never goes stale */
-  function friendSlots() {
-    const day = (offset, h, m) => {
-      const d = new Date();
-      d.setDate(d.getDate() + offset);
-      d.setHours(h, m, 0, 0);
-      return d.toISOString();
-    };
-    return [
-      { id: "s-sarah", user_id: "sarah", starts_at: day(1, 15, 0), ends_at: day(1, 15, 30), location: "Near campus", visible: true },
-      { id: "s-emma", user_id: "emma", starts_at: day(1, 15, 15), ends_at: day(1, 15, 40), location: "Tiong Bahru", visible: true },
-      { id: "s-sarah2", user_id: "sarah", starts_at: day(2, 17, 0), ends_at: day(2, 18, 0), location: "A café nearby", visible: true },
-    ];
-  }
 
   /* mirrors the shape the original provider gave every page */
   function getData() {
     if (!db.user) return null;
     const blocked = new Set(db.blocks || []);
-    const accepted = db.friendships.filter((f) => f.status === "accepted");
-    const friendIds = new Set(accepted.map((f) => (f.requester_id === "me" ? f.recipient_id : f.requester_id)));
-    const friends = FRIENDS.filter((p) => friendIds.has(p.id) && !blocked.has(p.id));
+    const friendships = social.friendships.filter((f) => !blocked.has(f.requester_id) && !blocked.has(f.recipient_id));
+    const friendIds = new Set(friendships.filter((f) => f.status === "accepted").map(otherOf));
+    const friends = [...friendIds].map((id) => social.profiles[id]).filter(Boolean);
     const fset = new Set(friends.map((f) => f.id));
     return {
       profile: db.profile,
       friends,
-      allProfiles: FRIENDS,
-      friendships: db.friendships.filter((f) => !blocked.has(f.requester_id) && !blocked.has(f.recipient_id)),
-      slots: [...db.slots, ...friendSlots().filter((s) => fset.has(s.user_id))].map((s) => ({ ...s })),
+      allProfiles: Object.values(social.profiles),
+      friendships,
+      slots: db.slots.map((s) => ({ ...s })),
       letters: db.letters.filter((l) => l.sender_id === "me" || fset.has(l.sender_id)),
-      moments: db.moments
-        .filter((m) => m.user_id === "me" || fset.has(m.user_id))
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+      moments: social.moments.filter((m) => m.user_id === "me" || fset.has(m.user_id)),
       invites: db.invites.filter((i) => fset.has(i.sender_id) || fset.has(i.recipient_id)),
-      notifications: db.notifications,
+      notifications: db.notifications.filter((n) => !["n1", "n2", "n3"].includes(n.id)), // old sample ones
     };
   }
 
@@ -374,7 +400,7 @@
             .slice(0, 3)
             .map(
               (m) =>
-                `<div class="list-row"><span class="action-icon pink-bg">${icon("camera")}</span><div><strong>${esc(m.caption)}</strong><p>${esc(m.mood)} · ${new Date(m.created_at).toLocaleDateString()}</p></div></div>`
+                `<div class="list-row"><span class="action-icon pink-bg">${icon("camera")}</span><div><strong>${esc(m.caption)}</strong><p>${m.user_id === "me" ? "You" : esc(data.friends.find((f) => f.id === m.user_id)?.display_name || "A friend")} · ${esc(m.mood)} · ${new Date(m.created_at).toLocaleDateString()}</p></div></div>`
             )
             .join("")}</div>`
         : emptyState({
@@ -442,7 +468,7 @@
     const header = pageHeader({
       eyebrow: "YOUR FAVOURITE PEOPLE",
       title: "Friendship starts with a hello ♡",
-      subtitle: "A small circle. A whole lot of love.",
+      subtitle: db.user ? `A small circle. A whole lot of love. Your username is @${esc(db.profile.username)}` : "A small circle. A whole lot of love.",
       action: btn({ attrs: 'data-open="friends"', html: `${icon("user-plus")}Add a friend` }),
     });
     if (!db.user)
@@ -457,7 +483,7 @@
           t.recipient_id === "me"
             ? btn({ size: "sm", attrs: `data-act="friend-accept" data-id="${t.id}"`, html: `${icon("check")}Accept` }) +
               btn({ size: "sm", variant: "ghost", attrs: `data-act="friend-decline" data-id="${t.id}"`, html: "Decline" })
-            : ""
+            : btn({ size: "sm", variant: "ghost", attrs: `data-act="friend-cancel" data-id="${t.id}"`, html: "Cancel" })
         }</div>`
       )
       .join("")}</div>
@@ -546,8 +572,9 @@ ${list.length
       return header + emptyState({ title: "There’s beauty in the everyday", text: "Keep a photo, a little thought, a tiny good thing. Share only with the people you choose.", action: btn({ attrs: 'data-open="moment"', html: `${icon("camera")}Keep a moment` }) });
     return `${header}<div class="photo-grid">${data.moments
       .map((t) => {
-        const img = t.image === "cafe" ? IMG.cafe : t.image;
-        return `<article class="polaroid">${img ? `<img src="${img}" width="500" height="500" loading="lazy" alt="A private friendship moment">` : '<div class="moment-colour mint-bg">🌼</div>'}<p class="polaroid-caption">${esc(t.caption)}</p><div class="polaroid-meta"><span>${esc(t.mood)} · ${new Date(t.created_at).toLocaleDateString()}</span>${t.user_id === "me" ? btn({ variant: "ghost", size: "icon", attrs: `title="Delete moment" data-act="moment-delete" data-id="${t.id}"`, html: icon("trash-2") }) : ""}</div></article>`;
+        const img = t.image;
+        const by = t.user_id === "me" ? "You" : data.friends.find((f) => f.id === t.user_id)?.display_name || "A friend";
+        return `<article class="polaroid">${img ? `<img src="${esc(img)}" width="500" height="500" loading="lazy" alt="A moment from ${esc(by)}">` : '<div class="moment-colour mint-bg">🌼</div>'}<p class="polaroid-caption">${esc(t.caption)}</p><div class="polaroid-meta"><span>${esc(by)} · ${esc(t.mood)} · ${new Date(t.created_at).toLocaleDateString()}</span>${t.user_id === "me" ? btn({ variant: "ghost", size: "icon", attrs: `title="Delete moment" data-act="moment-delete" data-id="${t.id}"`, html: icon("trash-2") }) : ""}</div></article>`;
       })
       .join("")}</div>`;
   }
@@ -663,7 +690,7 @@ ${field("Deliver later (optional)", 'name="delivery" type="datetime-local"')}
 <label class="form-field"><span>Your mood</span><select name="mood"><option>happy</option><option>cozy</option><option>tired</option><option>excited</option><option>quiet</option></select></label>
 <fieldset><legend class="mb-2 text-xs font-semibold">Share with</legend>${
         friends.length
-          ? friends.map((e) => `<label class="mb-2 flex items-center gap-2 text-sm"><input name="audience" value="${e.id}" type="checkbox">${esc(e.display_name)}</label>`).join("")
+          ? friends.map((e) => `<label class="mb-2 flex items-center gap-2 text-sm"><input name="audience" value="${e.id}" type="checkbox" checked>${esc(e.display_name)}</label>`).join("") + '<p class="text-xs text-muted-foreground">Untick anyone you’d rather keep this from.</p>'
           : '<p class="text-xs text-muted-foreground">Just you for now. Add friends to share your moments.</p>'
       }</fieldset>`;
     if (a === "friends")
@@ -819,8 +846,12 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       if (a === "friends") {
         const q = o("username").toLowerCase().replace(/^@/, "").trim();
         if (q.length < 3) throw Error("Enter at least 3 letters of a username.");
-        dlg.results = FRIENDS.filter((p) => p.username.startsWith(q) && !(db.blocks || []).includes(p.id));
-        dlg.error = dlg.results.length ? "" : "No one with that username yet. Try sarah, emma or alex.";
+        const pattern = q.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+        const { data: found, error } = await sb.from("profiles").select("id, username, display_name, bio").ilike("username", pattern).neq("id", myId()).limit(10);
+        if (error) throw error;
+        found.forEach((p) => (social.profiles[p.id] = social.profiles[p.id] || p));
+        dlg.results = found.filter((p) => !(db.blocks || []).includes(p.id));
+        dlg.error = dlg.results.length ? "" : "No one with that username yet. Ask your friend for theirs (it’s on their Friends page).";
         return renderDialog();
       }
       if (a === "availability") {
@@ -852,13 +883,22 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
           if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 10 * 1024 * 1024) throw Error("Choose a JPG, PNG or WebP photo up to 10 MB.");
           image = await resizeImage(file);
         }
-        db.moments.push({ id: uid(), user_id: "me", caption: o("caption"), mood: o("mood"), image, audience: fd.getAll("audience").map(String), created_at: new Date().toISOString() });
+        const audience = fd.getAll("audience").map(String);
+        const { error } = await sb.from("moments").insert({ caption: o("caption"), mood: o("mood"), image, audience });
+        if (error) throw error;
+        await loadSocial();
+        closeDialog();
+        render();
+        return toast(audience.length ? `Shared with ${audience.length === 1 ? "1 friend" : audience.length + " friends"} ♡` : "A little moment, kept just for you ♡");
       }
       if (a === "profile") {
         const u = o("username").toLowerCase().trim();
         if (!/^[a-z0-9_]{3,30}$/.test(u)) throw Error("Use 3–30 lowercase letters, numbers or underscores for your username.");
+        const { error } = await sb.from("profiles").upsert({ id: myId(), username: u, display_name: o("name").slice(0, 60) || "Friend", bio: o("bio").slice(0, 250) });
+        if (error) throw error.code === "23505" ? Error("That username is taken. Try another one.") : error;
         Object.assign(db.profile, { display_name: o("name"), username: u, bio: o("bio"), location: o("location"), mood: o("mood") });
         db.user.name = o("name");
+        db.user.username = u;
         db.settings = { share_availability: fd.get("sharing") === "on", notifications_enabled: fd.get("notifications") === "on" };
       }
       if (a === "invite") {
@@ -921,7 +961,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         if (error) throw error;
         authUser = data.user;
       }
-      await loadCorner(authUser);
+      await loadEverything(authUser);
       closeDialog();
       render();
       toast(mode === "signup" ? "Welcome to your little corner ♡" : "Welcome back ♡");
@@ -938,6 +978,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       await sb.auth.signOut({ scope: "local" });
     } catch (e) {}
     db = {};
+    social = { friendships: [], profiles: {}, moments: [] };
     clearCache();
     closeDialog();
     render();
@@ -957,24 +998,27 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       return;
     }
     const c = readCache();
-    if (c?.uid === authUser.id && c.data?.user) {
-      if (c.dirty) {
-        save(); // a change from the last page didn't finish sending
-        return;
-      }
-    } else {
-      db = {};
-    }
+    const sameUser = c?.uid === authUser.id && c.data?.user;
+    if (!sameUser) db = {};
     try {
-      await loadCorner(authUser);
+      if (sameUser && c.dirty) save(); // a change from the last page didn't finish sending
+      else await loadCorner(authUser);
     } catch (e) {
       if (!db.user) toast("Couldn’t load your corner just now. Try refreshing.");
+    }
+    if (db.user) {
+      try {
+        await syncProfile();
+        await loadSocial();
+      } catch (e) {
+        toast("Couldn’t load your friends just now. Try refreshing.");
+      }
     }
     render();
   }
 
   function act(name, id, el) {
-    const fs = db.friendships;
+    const fs = social.friendships;
     switch (name) {
       case "close":
         return closeDialog();
@@ -995,28 +1039,34 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       case "sign-out":
         return signOut();
       case "friend-accept":
-        fs.find((f) => f.id === id).status = "accepted";
-        return refresh();
+        return socialChange(() => sb.from("friendships").update({ status: "accepted" }).eq("id", id), "You’re friends now ♡");
       case "friend-decline":
-        fs.find((f) => f.id === id).status = "declined";
-        return refresh();
+        return socialChange(() => sb.from("friendships").update({ status: "declined" }).eq("id", id));
+      case "friend-cancel":
+        return socialChange(() => sb.from("friendships").delete().eq("id", id), "Request cancelled");
       case "friend-remove": {
         if (!window.confirm("Remove this friend?")) return;
-        db.friendships = fs.filter((f) => !(f.status === "accepted" && (f.requester_id === id || f.recipient_id === id)));
-        return refresh();
+        const f = fs.find((x) => otherOf(x) === id);
+        return f && socialChange(() => sb.from("friendships").delete().eq("id", f.id), "Friend removed");
       }
-      case "friend-block":
+      case "friend-block": {
         if (!window.confirm("Block this person and stop private sharing?")) return;
         db.blocks = [...(db.blocks || []), id];
-        return refresh();
-      case "friend-add": {
-        const existing = fs.find((f) => (f.requester_id === id || f.recipient_id === id) && f.status === "declined");
-        if (existing) existing.status = "pending";
-        else fs.push({ id: uid(), requester_id: "me", recipient_id: id, status: "pending" });
         save();
-        toast("A little friendship invitation sent ♡");
-        render();
-        return renderDialog();
+        const f = fs.find((x) => otherOf(x) === id);
+        return f ? socialChange(() => sb.from("friendships").delete().eq("id", f.id), "Blocked") : render();
+      }
+      case "friend-add": {
+        const existing = fs.find((f) => otherOf(f) === id);
+        if (existing?.status === "pending" && existing.recipient_id === "me")
+          return socialChange(() => sb.from("friendships").update({ status: "accepted" }).eq("id", existing.id), "You’re friends now ♡");
+        return socialChange(async () => {
+          if (existing?.status === "declined") {
+            const del = await sb.from("friendships").delete().eq("id", existing.id);
+            if (del.error) return del;
+          }
+          return sb.from("friendships").insert({ recipient_id: fromMe(id) });
+        }, "A little friendship invitation sent ♡");
       }
       case "slot-delete":
         db.slots = db.slots.filter((s) => s.id !== id);
@@ -1045,8 +1095,8 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         return renderDialog();
       }
       case "moment-delete":
-        db.moments = db.moments.filter((m) => m.id !== id);
-        return refresh();
+        if (!window.confirm("Delete this moment for everyone?")) return;
+        return socialChange(() => sb.from("moments").delete().eq("id", id), "Moment deleted");
       case "chat-with":
         ui.chatWith = id;
         return render();
