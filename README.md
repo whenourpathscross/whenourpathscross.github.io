@@ -8,13 +8,16 @@ A static copy of the "When Our Paths Cross" Lovable app, rebuilt in plain HTML, 
 ## Backend (Supabase)
 Accounts and data are stored in a free Supabase project (`Connections`, region ap-northeast-1).
 - **Sign up / sign in** use Supabase Auth with email and password. "Confirm email" is off, so new accounts can sign in straight away.
-- **Your data:** each account has one row in the `corners` table. It holds the profile, settings, letters, moments, free time, chats and invites as JSON.
-- **Security:** Row Level Security is on, so a signed-in user can only read and write their own row. Signed-out visitors can't read anything.
+- **`profiles`**: each account's username, display name and bio. Any signed-in member can search them (no emails are exposed). Usernames are unique.
+- **`friendships`**: friend requests. Only the two people involved can see one, only the recipient can accept or decline, and either person can remove it.
+- **`moments`**: posts. You see your own, plus posts an *accepted* friend chose to share with you ("Share with" when posting; everyone is ticked by default).
+- **`corners`**: everything else that's still private to you (settings, free time, letters, chats, invites, notifications) as one JSON row per account.
+- **Security:** Row Level Security is on for every table and was tested with fake users. Signed-out visitors can't read anything.
 - The key in `js/app.js` is the *publishable* key, which is meant to be public. Never commit the secret / service_role key.
-- A copy of your corner is cached in the browser so pages open instantly; changes sync to Supabase in the background.
 
-## Still not real (yet)
-- Friends are samples. Sarah, Emma and Alex aren't real users, and letters, chats and invites don't reach anyone else.
+## Still not shared (yet)
+- Letters, chats and catch-up invites save to your own corner only. They don't reach the friend yet.
+- New posts appear when the page is refreshed (no live updates).
 - Google sign-in and password-reset emails aren't switched on.
 - Free Supabase projects pause after a week with no activity. Open the dashboard before a demo.
 
