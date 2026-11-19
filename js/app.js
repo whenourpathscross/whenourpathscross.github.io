@@ -60,22 +60,96 @@
     { id: "alex", display_name: "Alex", username: "alex", bio: "" },
   ];
 
-  function load() {
+  /* ---------- Supabase backend ----------
+     Accounts live in Supabase Auth. Each account's corner (profile, settings,
+     letters, moments, free time…) is one row in the `corners` table, and Row
+     Level Security only lets a signed-in user read or write their own row.
+     The key below is the *publishable* key: it is meant to be public.
+     Never put the secret / service_role key in this file. */
+  const SUPABASE_URL = "https://xmiojspdlglkfmakoodv.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_yoU5G1MBBP2nMpoEl4NwSQ_N9iychyz";
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  /* A copy of your corner is cached in this browser so pages open instantly.
+     `dirty` means the latest change hasn't reached Supabase yet (for example
+     you clicked to another page mid-save); it gets sent on the next page load. */
+  const CACHE_KEY = "wopc-cache-v2";
+  const MAX_CORNER_CHARS = 4500000; // the database refuses corners over ~5 MB
+  try {
+    localStorage.removeItem(STORE_KEY); // the old browser-only corners
+  } catch (e) {}
+  function readCache() {
     try {
-      return JSON.parse(localStorage.getItem(STORE_KEY)) || {};
+      return JSON.parse(localStorage.getItem(CACHE_KEY)) || null;
     } catch (e) {
-      return {};
+      return null;
     }
   }
-  let db = load();
-  function save() {
+  function writeCache(dirty) {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(db));
-      return true;
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: db.user?.id, dirty, data: db }));
     } catch (e) {
-      toast("Your browser is out of space for that. Try a smaller photo.");
+      /* cache full: fine, Supabase still has the real copy */
+    }
+  }
+  function clearCache() {
+    try {
+      localStorage.removeItem(CACHE_KEY);
+    } catch (e) {}
+  }
+
+  const cached = readCache();
+  let db = cached?.data?.user ? cached.data : {};
+  let version = 0;
+  let pushing = Promise.resolve();
+
+  function save() {
+    if (!db.user) return true;
+    if (JSON.stringify(db).length > MAX_CORNER_CHARS) {
+      toast("Your corner is full. Try deleting a photo or two ♡");
       return false;
     }
+    version++;
+    writeCache(true);
+    const uid = db.user.id;
+    pushing = pushing.then(() => pushCorner(uid)).catch(() => {
+      writeCache(true);
+      toast("Couldn’t reach your account just now. Your change is kept here and will sync next time.");
+    });
+    return true;
+  }
+
+  async function pushCorner(uid) {
+    if (!db.user || db.user.id !== uid) return;
+    const sent = version;
+    const { error } = await sb.from("corners").upsert({ user_id: uid, data: db, updated_at: new Date().toISOString() });
+    if (error) {
+      writeCache(true);
+      toast("Couldn’t reach your account just now. Your change is kept here and will sync next time.");
+      return;
+    }
+    if (version === sent) writeCache(false);
+  }
+
+  const makeUser = (authUser, name) => ({
+    id: authUser.id,
+    email: authUser.email,
+    name,
+    username: (name.toLowerCase().replace(/[^a-z0-9_]/g, "") || "friend").slice(0, 30).padEnd(3, "_"),
+  });
+
+  /* fetch this account's corner, or make a fresh one on first sign-in */
+  async function loadCorner(authUser) {
+    const { data, error } = await sb.from("corners").select("data").eq("user_id", authUser.id).maybeSingle();
+    if (error) throw error;
+    if (data?.data?.user) {
+      db = data.data;
+      writeCache(false);
+      return;
+    }
+    const name = String(authUser.user_metadata?.name || authUser.email.split("@")[0]).trim() || "Friend";
+    db = seedFor(makeUser(authUser, name));
+    save();
   }
 
   function seedFor(user) {
@@ -547,7 +621,7 @@ ${emptyState({ title: "Your memories will belong here", text: "Your private lett
     return `<form class="modal-form" data-form="auth">
 ${mode !== "forgot" ? `${btn({ variant: "google", cls: "h-11 w-full", attrs: 'data-act="google"', html: `${GOOGLE_SVG}Continue with Google` })}<div class="auth-divider">or a little hello by email</div>` : ""}
 ${mode === "signup" ? field("Your name", 'name="name" required maxlength="60" placeholder="What should your friends call you?"') : ""}
-${field("Email address", 'name="email" type="email" required placeholder="you@example.com"')}
+${field("Email address", `name="email" type="email" required autocomplete="email" placeholder="you@example.com" value="${esc(d.email || "")}"`)}
 ${mode !== "forgot" ? field("Password", `name="password" type="password" required minlength="8" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" placeholder="At least 8 characters"`) : ""}
 ${d.error ? `<p role="alert" class="form-error">${esc(d.error)}</p>` : ""}
 ${d.status ? `<p role="status" class="rounded-lg bg-mint p-4 text-sm leading-relaxed">${esc(d.status)}</p>` : ""}
@@ -803,50 +877,99 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     }
   }
 
-  function submitAuth(form) {
+  const AUTH_ERRORS = {
+    invalid_credentials: "That email and password don’t match. Try again?",
+    user_already_exists: "There’s already a corner with that email. Try signing in instead.",
+    email_exists: "There’s already a corner with that email. Try signing in instead.",
+    weak_password: "That password is too easy to guess. Try a longer one.",
+    over_request_rate_limit: "Too many tries just now. Wait a minute and try again.",
+    signup_disabled: "New sign-ups are switched off at the moment.",
+  };
+  const authErrorText = (err) =>
+    AUTH_ERRORS[err?.code] || (/fetch|network/i.test(err?.message || "") ? "Couldn’t reach the server. Check your internet and try again." : err?.message || "Something went wrong. Please try again.");
+
+  async function submitAuth(form) {
+    if (!dlg) return;
     const fd = new FormData(form);
     const email = String(fd.get("email") || "").trim().toLowerCase();
-    const mode = dlg.mode;
-    db.accounts = db.accounts || {};
+    const password = String(fd.get("password") || "");
+    const mode = dlg.mode || "login";
+    dlg.email = email;
     dlg.error = "";
     dlg.status = "";
     if (mode === "forgot") {
-      dlg.status = "This copy keeps your corner in this browser, so there’s no password to reset. Just sign in with your email ♡";
+      dlg.status = "Password reset emails aren’t switched on for this project yet. Ask the site owner to reset it for you ♡";
       return renderDialog();
     }
-    if (mode === "signup") {
-      const name = String(fd.get("name") || "").trim() || "Friend";
-      db.accounts[email] = { name };
-      return signIn(email, name, "Welcome to your little corner ♡");
+    const submit = form.querySelector('[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      let authUser;
+      if (mode === "signup") {
+        const name = String(fd.get("name") || "").trim() || "Friend";
+        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { name } } });
+        if (error) throw error;
+        if (!data.session) {
+          if (!dlg) return;
+          dlg.status = "Almost there! Check your inbox to confirm your email, then sign in ♡";
+          dlg.mode = "login";
+          return renderDialog();
+        }
+        authUser = data.user;
+      } else {
+        const { data, error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        authUser = data.user;
+      }
+      await loadCorner(authUser);
+      closeDialog();
+      render();
+      toast(mode === "signup" ? "Welcome to your little corner ♡" : "Welcome back ♡");
+    } catch (err) {
+      if (!dlg) return;
+      dlg.error = authErrorText(err);
+      renderDialog();
     }
-    const acct = db.accounts[email];
-    if (!acct) {
-      dlg.error = "Invalid login credentials";
-      return renderDialog();
-    }
-    signIn(email, acct.name, "Welcome to your little corner ♡");
   }
 
-  function signIn(email, name, msg) {
-    const accounts = db.accounts || {};
-    const saved = (db.corners || {})[email];
-    const username = (name.toLowerCase().replace(/[^a-z0-9_]/g, "") || "friend").slice(0, 30).padEnd(3, "_");
-    const corner = saved || seedFor({ email, name, username });
-    const corners = { ...(db.corners || {}) };
-    db = { ...corner, accounts, corners };
-    save();
+  async function signOut() {
+    await pushing; // let the last save finish first
+    try {
+      await sb.auth.signOut({ scope: "local" });
+    } catch (e) {}
+    db = {};
+    clearCache();
     closeDialog();
     render();
-    toast(msg);
   }
 
-  function signOut() {
-    const corners = { ...(db.corners || {}) };
-    const { accounts, corners: _c, ...corner } = db;
-    if (db.user) corners[db.user.email] = corner;
-    db = { accounts, corners };
-    save();
-    closeDialog();
+  /* on each page load: show the cached corner straight away, then check with Supabase */
+  async function boot() {
+    render();
+    const { data } = await sb.auth.getSession();
+    const authUser = data?.session?.user;
+    if (!authUser) {
+      if (db.user) {
+        db = {};
+        clearCache();
+        render();
+      }
+      return;
+    }
+    const c = readCache();
+    if (c?.uid === authUser.id && c.data?.user) {
+      if (c.dirty) {
+        save(); // a change from the last page didn't finish sending
+        return;
+      }
+    } else {
+      db = {};
+    }
+    try {
+      await loadCorner(authUser);
+    } catch (e) {
+      if (!db.user) toast("Couldn’t load your corner just now. Try refreshing.");
+    }
     render();
   }
 
@@ -861,7 +984,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         dlg.status = "";
         return renderDialog();
       case "google":
-        dlg.error = "Google sign-in needs the original app’s server. Use a little hello by email instead.";
+        dlg.error = "Google sign-in isn’t switched on yet. Use a little hello by email instead.";
         return renderDialog();
       case "stationery":
         dlg.stationery = id;
@@ -974,5 +1097,5 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     if (e.key === "Escape" && dlg) closeDialog();
   });
 
-  render();
+  boot();
 })();
