@@ -24,7 +24,7 @@
 
   /* shadcn/ui Button classes (cva + a small tailwind-merge) */
   const BTN_BASE =
-    "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0";
+    "btn inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0";
   const BTN_VARIANT = {
     default: "bg-primary text-primary-foreground shadow hover:bg-primary/90",
     destructive: "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
@@ -343,8 +343,9 @@
   }
 
   const pageHeader = ({ eyebrow, title, subtitle, action }) =>
-    `<div class="greeting"><div><p class="eyebrow">${eyebrow}</p><h1 class="page-title">${esc(title)}</h1><p class="page-subtitle">${subtitle}</p></div>${action ?? '<span class="hand greeting-doodle">a little closer ♡</span>'}</div>`;
-  const emptyState = ({ title, text, action = "" }) => `<div class="empty-state">${icon("heart")}<h3>${title}</h3><p>${text}</p>${action}</div>`;
+    `<div class="greeting"><div><p class="eyebrow">${eyebrow}</p><h1 class="page-title">${esc(title).replace(/ ♡$/, "&nbsp;♡")}</h1><p class="page-subtitle">${subtitle}</p></div>${action ?? '<span class="hand greeting-doodle">a little closer ♡</span>'}</div>`;
+  const emptyState = ({ title, text, action = "" }) =>
+    `<div class="empty-state"><span class="empty-mark">${icon("heart")}</span><h3>${title}</h3><p>${text}</p>${action ? `<div class="empty-action">${action}</div>` : ""}</div>`;
 
   /* ---------- pages ---------- */
   function homePage(data) {
@@ -519,7 +520,8 @@ ${mine.length
           )
           .join("")}</div>`
       : emptyState({ title: "What does your week look like?", text: "A spare half-hour can become your favourite part of the day.", action: btn({ attrs: 'data-open="availability"', html: `${icon("plus")}Add a little free time` }) })}
-<h2 class="font-display text-xl my-7">Upcoming catch-ups &amp; invitations</h2>
+<h2 class="sub-heading">Upcoming catch-ups &amp; invitations</h2>
+${(data?.invites || []).length ? "" : `<p class="quiet-note">No catch-ups planned yet. Suggest one from a friend’s chat ♡</p>`}
 <div class="list-stack">${(data?.invites || [])
       .map(
         (i) => `<div class="list-row">${avatar(friendName(i.sender_id === "me" ? i.recipient_id : i.sender_id))}<div class="list-row-main"><strong>${new Date(i.starts_at).toLocaleString()}</strong><p>${esc(i.location || "A little catch-up")} · ${i.status}</p></div>${
@@ -655,7 +657,7 @@ ${d.status ? `<p role="status" class="rounded-lg bg-mint p-4 text-sm leading-rel
 ${btn({ type: "submit", cls: "h-11", html: `${mode === "signup" ? "Create my little corner" : mode === "forgot" ? "Send reset link" : "Come on in"}${icon("heart")}` })}
 <div class="flex flex-wrap items-center justify-center gap-1 text-xs text-muted-foreground">${
       mode === "login"
-        ? `New here? ${btn({ variant: "link", size: "sm", attrs: 'data-act="auth-mode" data-id="signup"', html: "Make yourself at home" })}${btn({ variant: "ghost", size: "sm", attrs: 'data-act="auth-mode" data-id="forgot"', html: "Forgot password?" })}`
+        ? `${btn({ variant: "link", size: "sm", attrs: 'data-act="auth-mode" data-id="signup"', html: "Sign up" })}${btn({ variant: "ghost", size: "sm", attrs: 'data-act="auth-mode" data-id="forgot"', html: "Forgot password?" })}`
         : btn({ variant: "link", size: "sm", attrs: 'data-act="auth-mode" data-id="login"', html: "Back to sign in" })
     }</div>
 </form>`;
@@ -694,7 +696,7 @@ ${field("Deliver later (optional)", 'name="delivery" type="datetime-local"')}
           : '<p class="text-xs text-muted-foreground">Just you for now. Add friends to share your moments.</p>'
       }</fieldset>`;
     if (a === "friends")
-      body = `${field("Their username", 'name="username" placeholder="@your_friend" required')}
+      body = `<label class="form-field"><span>Their username</span><span class="input-prefix"><span class="input-prefix-mark" aria-hidden="true">@</span><input name="username" placeholder="your_friend" required autocapitalize="none" autocomplete="off" spellcheck="false" aria-label="Their username, without the @"></span></label>
 ${btn({ type: "submit", html: `${icon("search")}Find a friend` })}
 ${(d.results || [])
   .map((r) => {
@@ -721,19 +723,31 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
   }
 
   function dialogFrame(title, description, inner, cls = "max-h-[90dvh] overflow-y-auto sm:max-w-lg") {
-    return `<div class="fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" data-state="open" data-act="close"></div>
+    return `<div class="dlg-overlay fixed inset-0 z-50${dlgEntering ? " dlg-enter" : ""}" data-state="open" data-act="close"></div>
 <div role="dialog" aria-modal="true" aria-labelledby="dlg-title" data-state="open" tabindex="-1" class="${cn(
-      "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+      `dlg-panel fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 sm:rounded-lg${dlgEntering ? " dlg-enter" : ""}`,
       cls
     )}">
-  <div class="flex flex-col space-y-1.5 text-center sm:text-left"><h2 id="dlg-title" class="${cn("text-lg font-semibold leading-none tracking-tight", title.cls || "")}">${esc(title.text)}</h2><p class="text-sm text-muted-foreground">${esc(description)}</p></div>
+  <div class="flex flex-col space-y-1.5 text-center sm:text-left"><h2 id="dlg-title" class="${cn("text-lg font-semibold leading-none tracking-tight", title.cls || "")}">${esc(title.text).replace(/ ♡$/, "&nbsp;♡")}</h2><p class="text-sm text-muted-foreground">${esc(description)}</p></div>
   ${inner}
-  <button type="button" data-act="close" class="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background cursor-pointer transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">${icon("x", "h-4 w-4")}<span class="sr-only">Close</span></button>
+  <button type="button" data-act="close" class="dlg-close absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background cursor-pointer transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">${icon("x", "h-4 w-4")}<span class="sr-only">Close</span></button>
 </div>`;
   }
 
+  let dlgEntering = false;
+  let lastTrigger = null; // centre of the button that opened the dialog
+  let closeTimer = null;
+  const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
   function renderDialog() {
     const host = document.getElementById("dialog-root");
+    if (dlg && closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+      host.classList.remove("is-closing");
+      host.innerHTML = "";
+    }
+    dlgEntering = !!dlg && !host.firstElementChild;
     if (!dlg) {
       host.innerHTML = "";
       host.dataset.key = "";
@@ -774,6 +788,12 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         else el.value = kept[k];
       });
     document.body.classList.add("modal-open");
+    const panel = host.querySelector(".dlg-panel");
+    if (dlgEntering && panel && lastTrigger) {
+      const r = panel.getBoundingClientRect();
+      panel.style.transformOrigin = `${Math.round(lastTrigger.x - r.left)}px ${Math.round(lastTrigger.y - r.top)}px`;
+    }
+    lastTrigger = null;
     const again = focused && host.querySelector(`[name="${focused}"]`);
     (again || host.querySelector("input:not([type=hidden]),select,textarea,[role=dialog]"))?.focus({ preventScroll: true });
   }
@@ -784,7 +804,25 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
   }
   function closeDialog() {
     dlg = null;
-    renderDialog();
+    const host = document.getElementById("dialog-root");
+    if (!host.firstElementChild || reduceMotion()) return renderDialog();
+    document.body.classList.remove("modal-open");
+    host.classList.add("is-closing");
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      closeTimer = null;
+      host.classList.remove("is-closing");
+      if (!dlg) renderDialog();
+    }, 140);
+  }
+
+  /* a short shake when something in the dialog is wrong (e.g. wrong password) */
+  function nudgeDialog() {
+    const panel = document.querySelector("#dialog-root .dlg-panel");
+    if (!panel || reduceMotion()) return;
+    panel.classList.remove("dlg-shake");
+    void panel.offsetWidth;
+    panel.classList.add("dlg-shake");
   }
 
   /* ---------- toasts (stand-in for sonner) ---------- */
@@ -798,9 +836,14 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     }
     const t = document.createElement("div");
     t.className = "toast";
+    t.setAttribute("role", "status");
     t.textContent = msg;
     host.appendChild(t);
-    setTimeout(() => t.remove(), 4000);
+    while (host.children.length > 3) host.firstElementChild.remove();
+    setTimeout(() => {
+      t.classList.add("leaving");
+      setTimeout(() => t.remove(), reduceMotion() ? 0 : 160);
+    }, 4000);
   }
 
   /* ---------- actions ---------- */
@@ -844,7 +887,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     const a = dlg.action;
     try {
       if (a === "friends") {
-        const q = o("username").toLowerCase().replace(/^@/, "").trim();
+        const q = o("username").toLowerCase().trim().replace(/^@+/, "");
         if (q.length < 3) throw Error("Enter at least 3 letters of a username.");
         const pattern = q.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
         const { data: found, error } = await sb.from("profiles").select("id, username, display_name, bio").ilike("username", pattern).neq("id", myId()).limit(10);
@@ -969,6 +1012,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       if (!dlg) return;
       dlg.error = authErrorText(err);
       renderDialog();
+      nudgeDialog();
     }
   }
 
@@ -986,6 +1030,8 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
 
   /* on each page load: show the cached corner straight away, then check with Supabase */
   async function boot() {
+    document.body.classList.add("first-paint");
+    setTimeout(() => document.body.classList.remove("first-paint"), 700);
     render();
     const { data } = await sb.auth.getSession();
     const authUser = data?.session?.user;
@@ -1111,6 +1157,8 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     const opener = e.target.closest("[data-open]");
     if (opener) {
       e.preventDefault();
+      const r = opener.getBoundingClientRect();
+      lastTrigger = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       return openDialog(opener.dataset.open, opener.dataset.target || "");
     }
     const a = e.target.closest("[data-act]");
@@ -1120,11 +1168,26 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     }
   });
 
+  function busy(form, work) {
+    const b = form.querySelector('[type="submit"]');
+    if (!b || !work || typeof work.then !== "function") return work;
+    b.dataset.loading = "";
+    b.setAttribute("aria-busy", "true");
+    b.disabled = true;
+    work.finally(() => {
+      if (!b.isConnected) return;
+      delete b.dataset.loading;
+      b.removeAttribute("aria-busy");
+      b.disabled = false;
+    });
+    return work;
+  }
+
   document.addEventListener("submit", (e) => {
     const form = e.target;
     e.preventDefault();
-    if (form.dataset.form === "auth") return submitAuth(form);
-    if (form.dataset.form === "main") return submitMain(form);
+    if (form.dataset.form === "auth") return busy(form, submitAuth(form));
+    if (form.dataset.form === "main") return busy(form, submitMain(form));
     if (form.dataset.form === "chat") {
       const body = form.body.value.trim();
       if (!body || !db.user) return;
@@ -1136,6 +1199,14 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
 
   document.addEventListener("input", (e) => {
     if (e.target.matches(".chat-compose input")) e.target.form.querySelector("button[type=submit]").disabled = !e.target.value.trim();
+    // the @ is already shown in front of the box, so drop any @ the person types or pastes
+    if (e.target.matches(".input-prefix input") && e.target.value.includes("@")) {
+      const at = e.target.selectionStart;
+      const before = e.target.value.length;
+      e.target.value = e.target.value.replace(/@/g, "");
+      const pos = Math.max(0, at - (before - e.target.value.length));
+      e.target.setSelectionRange(pos, pos);
+    }
     if (e.target.dataset.preview === "letter") {
       const p = document.getElementById("letter-preview");
       p.textContent = e.target.value;

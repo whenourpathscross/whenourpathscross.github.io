@@ -24,6 +24,7 @@ Accounts and data are stored in a free Supabase project (`Connections`, region a
 ## Files
 - `css/styles.css`: the original Tailwind build, trimmed to the classes the app uses
 - `js/app.js`: every page, dialog and action, plus the Supabase connection
+- `css/polish.css`: design pass (motion, button feedback, empty states, phone layout), loaded after `styles.css`
 - `js/supabase.js`: the Supabase browser library (v2.119.1), bundled so the site doesn't depend on a CDN
 - `js/icons.js`: the Lucide icons the app uses
 - `assets/`: `friendship-garden.jpg` and `cafe-moment.jpg`

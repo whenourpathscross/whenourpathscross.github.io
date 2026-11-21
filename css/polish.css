@@ -1,0 +1,273 @@
+/* =====================================================================
+   polish.css: design pass on top of styles.css
+   Motion follows the basics-of-design principles (numbers in comments).
+   Loaded after styles.css, so these rules win.
+   ===================================================================== */
+
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);   /* things entering (5) */
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);    /* things leaving (5) */
+  --ease-move: cubic-bezier(0.65, 0, 0.35, 1); /* moving on screen (5) */
+}
+
+/* ---------- Buttons: quick, tactile feedback (8, 16) ---------- */
+.btn {
+  transition:
+    background-color 0.15s var(--ease-out),
+    color 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out),
+    box-shadow 0.15s var(--ease-out),
+    transform 0.1s var(--ease-out);
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* loading state while Supabase answers (16): spinner replaces the icon */
+.btn[data-loading] { cursor: progress; opacity: 1; }
+.btn[data-loading] svg { display: none; }
+.btn[data-loading]::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.7s linear infinite; /* linear is fine for spinners (5) */
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Empty states: the cramped icon-in-button fix ---------- */
+.empty-state {
+  background: color-mix(in oklch, var(--paper) 60%, transparent);
+  padding: 44px 24px 40px;
+}
+/* only the heart on top is big. Before, this rule also hit the icon inside the button */
+.empty-state svg { width: auto; height: auto; margin: 0; }
+.empty-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--lavender) 70%, var(--card));
+  color: var(--primary);
+}
+.empty-mark svg { width: 26px; height: 26px; }
+.empty-state p { margin: 9px auto 22px; }
+.empty-action { display: flex; justify-content: center; }
+
+/* soft pill: the page header keeps the one strong purple button (15) */
+.empty-action .btn {
+  height: 42px;
+  padding: 0 20px 0 16px;
+  gap: 8px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--lavender) 75%, var(--card));
+  color: var(--primary);
+  border: 1px solid color-mix(in oklch, var(--primary) 22%, transparent);
+  box-shadow: none;
+  font-weight: 650;
+}
+.empty-action .btn:hover {
+  background: color-mix(in oklch, var(--lavender) 100%, var(--primary) 6%);
+  border-color: color-mix(in oklch, var(--primary) 35%, transparent);
+}
+.empty-action .btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+
+.sub-heading { font: 500 20px/1.3 var(--font-display); margin: 34px 0 12px; }
+.quiet-note {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+/* ---------- Dialog spacing: one scale + grouping ----------
+   Scale: Fibonacci steps 8 · 13 · 21 · 34 (each step ≈ 1.618× the last).
+   Rule:  space inside a group < space between groups (proximity).
+     8  label ↔ its box, title ↔ subtitle      (same thing)
+     13 button ↔ its helper links               (same action)
+     21 field ↔ field, Google ↔ "or" ↔ email     (siblings)
+     34 card edge, header ↔ form, fields ↔ submit (separate sections)
+   Type: title 24px ≈ 15px × 1.618. All controls 44px tall. */
+:root { --s1: 8px; --s2: 13px; --s3: 21px; --s4: 34px; }
+.dlg-panel { padding: calc(var(--s4) - 1px); gap: var(--s4); } /* -1px: the card's border counts toward the 34 */
+.dlg-panel > div:first-child { gap: var(--s1); }
+.dlg-panel > div:first-child > * { margin: 0; }
+#dlg-title { font-size: 24px; }
+#dlg-title + p { font-size: 15px; line-height: 1.5; }
+.modal-form { gap: var(--s3); padding-top: 0; }
+.modal-form .form-field { gap: var(--s1); font-size: 13px; }
+.modal-form .form-field input,
+.modal-form .form-field select { height: 44px; }
+.modal-form > button[type="submit"] { height: 44px; margin-top: var(--s2); } /* 21 + 13 = 34 above */
+.modal-form .btn[data-act="google"] { height: 44px; }
+.auth-divider { font-size: 12px; gap: var(--s2); }
+/* the helper links sit 13px under the button; their own 8px padding is pulled back so the card edge stays 34px */
+form[data-form="auth"] > div:last-child { margin: calc(var(--s2) - var(--s3)) 0 calc(-1 * var(--s1)); gap: var(--s3); }
+/* X centred on the title's first line, its icon lined up with the content edge */
+.dlg-panel .dlg-close { top: calc(var(--s4) + 15px - 20px); right: calc(var(--s4) - 12px); }
+
+/* ---------- Dialogs: grow from the trigger, close faster (11, 18) ---------- */
+.dlg-overlay { background: oklch(25% 0.04 311 / 0.55); backdrop-filter: blur(2px); }
+.dlg-panel {
+  border-radius: 18px;
+  box-shadow: 0 24px 60px -12px oklch(37% 0.045 311 / 0.35), 0 2px 6px oklch(37% 0.045 311 / 0.08);
+}
+.dlg-panel:focus, .dlg-panel:focus-visible { outline: none; }
+.dlg-overlay.dlg-enter { animation: fade-in 0.2s var(--ease-out) both; }
+.dlg-panel.dlg-enter { animation: dlg-in 0.24s var(--ease-out) both; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes dlg-in { from { opacity: 0; scale: 0.94; } }
+
+/* close in ~140ms with ease-in: about half the opening time (18) */
+#dialog-root.is-closing { pointer-events: none; }
+#dialog-root.is-closing .dlg-overlay { animation: fade-out 0.14s var(--ease-in) both; }
+#dialog-root.is-closing .dlg-panel { animation: dlg-out 0.14s var(--ease-in) both; }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes dlg-out { to { opacity: 0; scale: 0.97; } }
+
+/* wrong password: three small shakes in ~300ms (9) */
+.dlg-shake { animation: shake 0.3s var(--ease-move); }
+@keyframes shake {
+  20% { translate: calc(-50% - 6px) -50%; }
+  40% { translate: calc(-50% + 5px) -50%; }
+  60% { translate: calc(-50% - 4px) -50%; }
+  80% { translate: calc(-50% + 2px) -50%; }
+}
+
+/* bigger hit area for the X (12) */
+.dlg-close {
+  right: 10px;
+  top: 10px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.dlg-close:hover { background: var(--accent); }
+
+.form-error { animation: fade-in 0.15s var(--ease-out); }
+
+/* ---------- Toasts: slide in, fade out quicker (5, 18) ---------- */
+.toast {
+  border-radius: 12px;
+  animation: toast-in 0.24s var(--ease-out) both;
+  box-shadow: 0 12px 30px -10px oklch(37% 0.045 311 / 0.25);
+}
+.toast.leaving { animation: toast-out 0.15s var(--ease-in) both; }
+@keyframes toast-in { from { opacity: 0; translate: 0 10px; } }
+@keyframes toast-out { to { opacity: 0; translate: 0 6px; } }
+
+/* ---------- Cards and links: small hover lift (8, 10) ---------- */
+.quick-action {
+  transition: transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out), border-color 0.15s var(--ease-out);
+}
+.quick-action:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklch, var(--primary) 25%, var(--border));
+  box-shadow: 0 8px 20px -10px oklch(37% 0.045 311 / 0.2);
+}
+.quick-action:active { transform: translateY(0) scale(0.98); }
+.nav-link { transition: background-color 0.15s var(--ease-out), color 0.15s var(--ease-out); }
+.nav-link:active { transform: scale(0.98); }
+.polaroid { transition: transform 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out); }
+.polaroid:hover { transform: rotate(0deg) translateY(-3px); }
+
+/* ---------- Page entrance: only on first load, never on redraws (3, 20) ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  .page-content { animation: none; }
+  body.first-paint .page-content { animation: arrive 0.28s var(--ease-out) both; }
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > * {
+    animation: arrive 0.26s var(--ease-out) both;
+  }
+  /* 40ms stagger, capped at 8 items so the cascade stays under ~300ms (3) */
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > :nth-child(2) { animation-delay: 40ms; }
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > :nth-child(3) { animation-delay: 80ms; }
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > :nth-child(4) { animation-delay: 120ms; }
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > :nth-child(5) { animation-delay: 160ms; }
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > :nth-child(6) { animation-delay: 200ms; }
+  body.first-paint :is(.list-stack, .photo-grid, .quick-actions) > :nth-child(n + 7) { animation-delay: 240ms; }
+}
+
+/* ---------- Layout ---------- */
+.page-title, #dlg-title { text-wrap: balance; }
+#dlg-title { line-height: 1.25; }
+.welcome-copy h2, .empty-state h3, .section-header h2 { text-wrap: balance; }
+.empty-state p, .page-subtitle { text-wrap: pretty; }
+
+/* phone */
+@media (width <= 760px) {
+  /* title on top, button underneath instead of squeezed side by side */
+  .greeting:has(> .btn) { flex-direction: column; align-items: stretch; gap: 18px; }
+  .greeting:has(> .btn) > .btn { width: 100%; height: 44px; }
+
+  /* hero: soft paper wash so the words stay readable over the garden */
+  .welcome-band { min-height: 0; }
+  .welcome-band::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: linear-gradient(180deg,
+      color-mix(in oklch, var(--paper) 92%, transparent) 0%,
+      color-mix(in oklch, var(--paper) 82%, transparent) 42%,
+      transparent 68%);
+  }
+  .welcome-copy { z-index: 2; max-width: none; padding: 24px 22px 150px; }
+  .welcome-copy h2 { font-size: 24px; }
+  .welcome-copy p { max-width: 30ch; }
+  .welcome-band > img { object-position: 70% bottom; }
+
+  /* mailbox and garden cards: one per row so the text isn't squashed */
+  .dashboard-side { grid-template-columns: 1fr; }
+
+  /* dialogs: a floating card with room around it */
+  /* phone: same scale, edge steps down one (34 → 21) */
+  .dlg-panel {
+    width: calc(100% - 26px);
+    max-height: calc(100dvh - 34px);
+    padding: calc(var(--s3) - 1px);
+    border-radius: 18px;
+  }
+  .dlg-panel .dlg-close { top: calc(var(--s3) + 15px - 20px); right: calc(var(--s3) - 12px); }
+  .empty-state { padding: 36px 18px 32px; }
+  /* keep the title clear of the X */
+  .dlg-panel > div:first-child { padding-inline: 34px; }
+}
+@media (width <= 420px) {
+  .preview-badge { display: none; }
+}
+
+/* touch screens: tap targets of at least 44px (12) */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .btn.h-9.w-9, .btn.h-8.w-8 { min-width: 44px; }
+  .form-field input, .form-field select, .form-field textarea { min-height: 44px; font-size: 16px; }
+}
+
+/* ---------- Reduced motion: no movement, just quick fades (20) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .btn[data-loading]::after { animation-duration: 1.2s !important; animation-iteration-count: infinite !important; }
+  .btn:active, .quick-action:hover, .polaroid:hover { transform: none; }
+}
+
+/* ---------- Friend search: a fixed "@" in front of the username box ---------- */
+.input-prefix { position: relative; display: block; }
+.input-prefix-mark {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  translate: 0 -50%;
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: 700;
+  pointer-events: none; /* clicks fall through to the box */
+}
+.input-prefix input { width: 100%; padding-left: 31px; }
