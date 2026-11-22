@@ -39,3 +39,10 @@ This applies to every pop-up, not only sign-in. On phones the card edge steps do
 
 ## Friend search
 - The username box has a fixed purple "@" in front, so you only type the name. If someone types or pastes an "@" anyway, it's dropped, so it never shows "@@".
+
+## Full backend (round 3)
+- Chats, letters, catch-up invites and free time are now real and reach the other person. Before, they were saved only on the sender's account.
+- Chats, letters, invites, friend requests and free time update live without a refresh.
+- "Deliver later" letters now really arrive at the chosen time.
+- Notifications come from what actually happened: friend requests, letters waiting, invites, and replies to your invites. The bell shows a dot when something is new.
+- Overlapping free time with a friend shows up on the home page as a match.

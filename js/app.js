@@ -150,7 +150,7 @@
   /* ---------- shared data: profiles, friendships, moments ----------
      These live in their own Supabase tables so other people can see them.
      Inside the app, your own id is written as "me" so the page code stays simple. */
-  let social = { friendships: [], profiles: {}, moments: [] };
+  let social = { friendships: [], profiles: {}, moments: [], slots: [], letters: [], messages: [], invites: [] };
   const myId = () => db.user?.id;
   const toMe = (id) => (id === myId() ? "me" : id);
   const fromMe = (id) => (id === "me" ? myId() : id);
@@ -163,7 +163,7 @@
     const p = db.profile;
     let username = p.username;
     for (let i = 0; i < 5; i++) {
-      const { error } = await sb.from("profiles").upsert({ id: myId(), username, display_name: (p.display_name || "Friend").slice(0, 60), bio: (p.bio || "").slice(0, 250) });
+      const { error } = await sb.from("profiles").upsert({ id: myId(), username, display_name: (p.display_name || "Friend").slice(0, 60), bio: (p.bio || "").slice(0, 250), share_availability: db.settings?.share_availability !== false });
       if (!error) break;
       if (error.code !== "23505" || i === 4) throw error;
       username = `${p.username.slice(0, 25)}_${Math.floor(1000 + Math.random() * 9000)}`;
@@ -178,19 +178,26 @@
   async function loadSocial() {
     if (!db.user) return;
     const withImages = PAGE === "moments";
-    const [fr, mo] = await Promise.all([
+    const since = new Date(Date.now() - 864e5).toISOString(); // free time and catch-ups from yesterday on
+    const [fr, mo, sl, le, me, iv] = await Promise.all([
       sb.from("friendships").select("id, requester_id, recipient_id, status, created_at"),
       sb
         .from("moments")
         .select(withImages ? "id, user_id, caption, mood, image, audience, created_at" : "id, user_id, caption, mood, audience, created_at")
         .order("created_at", { ascending: false })
         .limit(withImages ? 40 : 10),
+      sb.from("slots").select("id, user_id, starts_at, ends_at, location, visible").gte("ends_at", since).order("starts_at"),
+      sb.from("letters").select("id, sender_id, recipient_id, title, body, stationery, open_when, delivered_at, opened_at, saved, created_at").order("created_at", { ascending: false }).limit(200),
+      // shortcut: newest 500 messages across all chats, add per-chat paging if chats get long
+      sb.from("messages").select("id, sender_id, recipient_id, body, created_at").order("created_at", { ascending: false }).limit(500),
+      sb.from("invites").select("id, sender_id, recipient_id, starts_at, ends_at, location, status, created_at").gte("ends_at", since).order("starts_at"),
     ]);
-    if (fr.error) throw fr.error;
-    if (mo.error) throw mo.error;
+    for (const r of [fr, mo, sl, le, me, iv]) if (r.error) throw r.error;
     const ids = new Set();
     fr.data.forEach((f) => ids.add(f.requester_id).add(f.recipient_id));
     mo.data.forEach((m) => ids.add(m.user_id));
+    sl.data.forEach((x) => ids.add(x.user_id));
+    [...le.data, ...me.data, ...iv.data].forEach((x) => ids.add(x.sender_id).add(x.recipient_id));
     ids.delete(myId());
     const profiles = {};
     if (ids.size) {
@@ -202,7 +209,50 @@
       profiles,
       friendships: fr.data.map((f) => ({ ...f, requester_id: toMe(f.requester_id), recipient_id: toMe(f.recipient_id) })),
       moments: mo.data.map((m) => ({ ...m, user_id: toMe(m.user_id), image: m.image && SAFE_IMG.test(m.image) ? m.image : null })),
+      slots: sl.data.map((x) => ({ ...x, user_id: toMe(x.user_id) })),
+      letters: le.data.map(pair),
+      messages: me.data.map(pair).reverse(),
+      invites: iv.data.map(pair),
     };
+  }
+  const pair = (x) => ({ ...x, sender_id: toMe(x.sender_id), recipient_id: toMe(x.recipient_id) });
+
+  /* live updates: when something you can see changes, reload and redraw */
+  let live = null;
+  let liveTimer = null;
+  function startLive() {
+    if (live || !db.user) return;
+    live = sb.channel("my-corner");
+    for (const table of ["messages", "letters", "invites", "friendships", "slots"])
+      live.on("postgres_changes", { event: "*", schema: "public", table }, () => {
+        clearTimeout(liveTimer);
+        liveTimer = setTimeout(async () => {
+          try {
+            await loadSocial();
+            redrawKeepingTyping();
+            if (dlg?.action === "read-letter") renderDialog();
+          } catch (e) {}
+        }, 250);
+      });
+    live.subscribe();
+  }
+  function stopLive() {
+    if (live) sb.removeChannel(live);
+    live = null;
+  }
+  // a live redraw shouldn't wipe a half-typed chat message
+  function redrawKeepingTyping() {
+    const input = document.querySelector(".chat-compose input");
+    const typing = input && { value: input.value, focused: document.activeElement === input, at: input.selectionStart };
+    render();
+    const again = typing && document.querySelector(".chat-compose input");
+    if (!again) return;
+    again.value = typing.value;
+    again.form.querySelector("button[type=submit]").disabled = !typing.value.trim();
+    if (typing.focused) {
+      again.focus();
+      again.setSelectionRange(typing.at, typing.at);
+    }
   }
 
   /* run a Supabase change, then reload friends/moments and redraw */
@@ -225,6 +275,7 @@
     try {
       await syncProfile();
       await loadSocial();
+      startLive();
     } catch (e) {
       toast("Couldn’t load your friends just now. Try refreshing.");
     }
@@ -264,12 +315,27 @@
       friends,
       allProfiles: Object.values(social.profiles),
       friendships,
-      slots: db.slots.map((s) => ({ ...s })),
-      letters: db.letters.filter((l) => l.sender_id === "me" || fset.has(l.sender_id)),
+      slots: social.slots.filter((x) => x.user_id === "me" || fset.has(x.user_id)),
+      letters: social.letters.filter((l) => l.sender_id === "me" || !blocked.has(l.sender_id)),
       moments: social.moments.filter((m) => m.user_id === "me" || fset.has(m.user_id)),
-      invites: db.invites.filter((i) => fset.has(i.sender_id) || fset.has(i.recipient_id)),
-      notifications: db.notifications.filter((n) => !["n1", "n2", "n3"].includes(n.id)), // old sample ones
+      messages: social.messages,
+      invites: social.invites.filter((i) => fset.has(i.sender_id) || fset.has(i.recipient_id)),
+      notifications: notificationsFor(friendships, blocked),
     };
+  }
+
+  /* notifications aren't stored: they're worked out from requests, letters and invites waiting for you */
+  function notificationsFor(friendships, blocked) {
+    const name = (id) => social.profiles[id]?.display_name || "A friend";
+    const read = new Set(db.readNotifs || []);
+    const list = [
+      ...friendships.filter((f) => f.status === "pending" && f.recipient_id === "me").map((f) => ({ id: `fr-${f.id}`, body: `${name(f.requester_id)} would love to be friends ♡`, created_at: f.created_at, to: "friends" })),
+      ...social.letters.filter((l) => l.recipient_id === "me" && !l.opened_at && !blocked.has(l.sender_id)).map((l) => ({ id: `lt-${l.id}`, body: `A little letter from ${name(l.sender_id)} is waiting 💌`, created_at: l.delivered_at, to: "mailbox" })),
+      ...social.invites.filter((i) => i.recipient_id === "me" && i.status === "pending").map((i) => ({ id: `iv-${i.id}`, body: `${name(i.sender_id)} suggested a catch-up on ${new Date(i.starts_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`, created_at: i.created_at, to: "availability" })),
+      ...social.invites.filter((i) => i.sender_id === "me" && i.status !== "pending").map((i) => ({ id: `ia-${i.id}-${i.status}`, body: `${name(i.recipient_id)} ${i.status} your catch-up`, created_at: i.created_at, to: "availability" })),
+      ...(db.notifications || []).filter((n) => !["n1", "n2", "n3"].includes(n.id)), // n1–n3 were old sample ones
+    ];
+    return list.map((n) => ({ ...n, read_at: n.read_at || (read.has(n.id) ? true : null) })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }
 
   /* overlap of your free time with friends' free time (home "paths might cross") */
@@ -330,7 +396,7 @@
       <div class="topbar-left">${icon("sun", "size-4")}<span>A little space for your favourite people</span></div>
       <div class="topbar-actions">
         ${!user ? '<span class="preview-badge">Sample corner</span>' : ""}
-        ${btn({ variant: "ghost", size: "icon", to: "/notifications", attrs: 'title="Notifications" aria-label="Notifications"', html: icon("bell") })}
+        ${btn({ variant: "ghost", size: "icon", cls: "bell", to: "/notifications", attrs: `title="Notifications" aria-label="Notifications${data?.notifications.some((n) => !n.read_at) ? " (new)" : ""}"`, html: icon("bell") + (data?.notifications.some((n) => !n.read_at) ? '<span class="bell-dot"></span>' : "") })}
         ${user
           ? btn({ variant: "ghost", size: "icon", attrs: 'data-open="profile"', html: avatar(name) })
           : btn({ variant: "ghost", size: "sm", attrs: 'data-open="auth"', html: `Sign in ${icon("chevron-right")}` })}
@@ -550,9 +616,9 @@ ${list.length
           .map((t) =>
             btn({
               variant: "ghost",
-              cls: `letter-card h-auto flex-col whitespace-normal stationery-${t.stationery}`,
+              cls: `letter-card h-auto flex-col whitespace-normal stationery-${paper(t.stationery)}`,
               attrs: `data-act="letter-open" data-id="${t.id}"`,
-              html: `<div class="envelope">${icon("heart")}</div><h3>${esc(t.title)}</h3><p>${t.opened_at ? "Opened with love" : "Sealed with love"} · ${new Date(t.created_at).toLocaleDateString()}</p>${t.open_when ? `<p>Open when ${esc(t.open_when)}</p>` : ""}`,
+              html: `<div class="envelope">${icon("heart")}</div><h3>${esc(t.title)}</h3><p>${new Date(t.delivered_at) > Date.now() ? `Arrives ${new Date(t.delivered_at).toLocaleDateString()}` : t.opened_at ? "Opened with love" : "Sealed with love"} · ${new Date(t.created_at).toLocaleDateString()}</p>${t.open_when ? `<p>Open when ${esc(t.open_when)}</p>` : ""}`,
             })
           )
           .join("")}</div>`
@@ -587,7 +653,7 @@ ${list.length
       return header + emptyState({ title: "Your people, one little hello away", text: "Add a friend to start a private conversation.", action: btn({ attrs: 'data-open="friends"', html: `${icon("user-plus")}Find a friend` }) });
     const d = data.friends.some((f) => f.id === ui.chatWith) ? ui.chatWith : data.friends[0].id;
     const f = data.friends.find((x) => x.id === d);
-    const msgs = db.messages.filter((m) => (m.sender_id === "me" && m.recipient_id === d) || (m.sender_id === d && m.recipient_id === "me"));
+    const msgs = data.messages.filter((m) => (m.sender_id === "me" && m.recipient_id === d) || (m.sender_id === d && m.recipient_id === "me"));
     return `${header}<div class="chat-layout">
   <div class="chat-friends">${data.friends.map((e) => btn({ variant: e.id === d ? "secondary" : "ghost", cls: "w-full justify-start h-auto py-3", attrs: `data-act="chat-with" data-id="${e.id}"`, html: `${avatar(e.display_name)}${esc(e.display_name)}` })).join("")}</div>
   <div class="chat-main">
@@ -641,6 +707,7 @@ ${emptyState({ title: "Your memories will belong here", text: "Your private lett
   };
   const field = (label, attrs) => `<label class="form-field"><span>${label}</span><input ${attrs}></label>`;
   const STATIONERY = ["pink", "lavender", "cream", "blue", "mint", "night"];
+  const paper = (s) => (STATIONERY.includes(s) ? s : "pink");
   const GOOGLE_SVG = `<svg aria-hidden="true" viewBox="0 0 24 24" class="size-[18px]"><path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"></path><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"></path><path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z"></path><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09c.95-2.85 3.6-4.96 6.73-4.96z"></path></svg>`;
 
   let dlg = null; // {action, target, mode, error, status, stationery, results}
@@ -762,7 +829,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       html = dialogFrame(
         { text: g.title },
         "A little letter, just for you.",
-        `<div class="letter-paper stationery-${g.stationery}">${esc(g.body)}</div>${g.recipient_id === "me" ? btn({ variant: "outline", attrs: `data-act="letter-save" data-id="${g.id}"`, html: `${icon("heart")}${g.saved ? "Remove from memory box" : "Keep in my memory box"}` }) : ""}`,
+        `<div class="letter-paper stationery-${paper(g.stationery)}">${esc(g.body)}</div>${g.recipient_id === "me" ? btn({ variant: "outline", attrs: `data-act="letter-save" data-id="${g.id}"`, html: `${icon("heart")}${g.saved ? "Remove from memory box" : "Keep in my memory box"}` }) : ""}`,
         ""
       );
     } else {
@@ -901,23 +968,22 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         const s = new Date(`${o("date")}T${o("start")}`);
         const e = new Date(`${o("date")}T${o("end")}`);
         if (e <= s || s.getTime() <= Date.now()) throw Error("Choose an upcoming period with an end after its start.");
-        db.slots.push({ id: uid(), user_id: "me", starts_at: s.toISOString(), ends_at: e.toISOString(), location: o("location"), visible: fd.get("visible") === "on" });
+        const { error } = await sb.from("slots").insert({ starts_at: s.toISOString(), ends_at: e.toISOString(), location: o("location").slice(0, 120), visible: fd.get("visible") === "on" });
+        if (error) throw error;
+        await loadSocial();
       }
       if (a === "letter") {
         if (!o("friend")) throw Error("Choose a friend first.");
-        db.letters.push({
-          id: uid(),
-          sender_id: "me",
+        const { error } = await sb.from("letters").insert({
           recipient_id: o("friend"),
-          title: o("title") || "A little letter",
+          title: (o("title") || "A little letter").slice(0, 120),
           body: o("body"),
-          stationery: dlg.stationery,
-          open_when: o("open_when") || null,
-          created_at: new Date().toISOString(),
+          stationery: paper(dlg.stationery),
+          open_when: o("open_when").slice(0, 120) || null,
           delivered_at: o("delivery") ? new Date(o("delivery")).toISOString() : new Date().toISOString(),
-          opened_at: null,
-          saved: false,
         });
+        if (error) throw error;
+        await loadSocial();
       }
       if (a === "moment") {
         const file = fd.get("photo");
@@ -937,7 +1003,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       if (a === "profile") {
         const u = o("username").toLowerCase().trim();
         if (!/^[a-z0-9_]{3,30}$/.test(u)) throw Error("Use 3–30 lowercase letters, numbers or underscores for your username.");
-        const { error } = await sb.from("profiles").upsert({ id: myId(), username: u, display_name: o("name").slice(0, 60) || "Friend", bio: o("bio").slice(0, 250) });
+        const { error } = await sb.from("profiles").upsert({ id: myId(), username: u, display_name: o("name").slice(0, 60) || "Friend", bio: o("bio").slice(0, 250), share_availability: fd.get("sharing") === "on" });
         if (error) throw error.code === "23505" ? Error("That username is taken. Try another one.") : error;
         Object.assign(db.profile, { display_name: o("name"), username: u, bio: o("bio"), location: o("location"), mood: o("mood") });
         db.user.name = o("name");
@@ -948,12 +1014,14 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         if (!o("friend")) throw Error("Choose a friend first.");
         const s = new Date(o("start"));
         const e = new Date(s.getTime() + Number(o("duration")) * 6e4);
-        db.invites.push({ id: uid(), sender_id: "me", recipient_id: o("friend"), starts_at: s.toISOString(), ends_at: e.toISOString(), location: o("location"), status: "pending" });
+        const { error } = await sb.from("invites").insert({ recipient_id: o("friend"), starts_at: s.toISOString(), ends_at: e.toISOString(), location: o("location").slice(0, 120) });
+        if (error) throw error;
+        await loadSocial();
       }
       if (!save()) return;
       closeDialog();
       render();
-      toast(a === "letter" ? "Your little letter is on its way 💌" : a === "moment" ? "A little moment, kept ♡" : "All saved ♡");
+      toast({ letter: "Your little letter is on its way 💌", invite: "Catch-up suggested ♡", availability: "Free time shared with your friends ♡" }[a] || "All saved ♡");
     } catch (err) {
       dlg.error = err?.message || "Couldn’t save that. Please try again.";
       renderDialog();
@@ -1022,7 +1090,8 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       await sb.auth.signOut({ scope: "local" });
     } catch (e) {}
     db = {};
-    social = { friendships: [], profiles: {}, moments: [] };
+    stopLive();
+    social = { friendships: [], profiles: {}, moments: [], slots: [], letters: [], messages: [], invites: [] };
     clearCache();
     closeDialog();
     render();
@@ -1056,6 +1125,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       try {
         await syncProfile();
         await loadSocial();
+        startLive();
       } catch (e) {
         toast("Couldn’t load your friends just now. Try refreshing.");
       }
@@ -1115,30 +1185,38 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         }, "A little friendship invitation sent ♡");
       }
       case "slot-delete":
-        db.slots = db.slots.filter((s) => s.id !== id);
-        return refresh();
+        return socialChange(() => sb.from("slots").delete().eq("id", id), "Free time removed");
       case "invite-accept":
       case "invite-decline":
-        db.invites.find((i) => i.id === id).status = name === "invite-accept" ? "accepted" : "declined";
-        return refresh();
+        return socialChange(() => sb.from("invites").update({ status: name === "invite-accept" ? "accepted" : "declined" }).eq("id", id), name === "invite-accept" ? "See you there ♡" : "Maybe another time");
       case "mail-tab":
         ui.mailTab = id;
         return render();
       case "letter-open": {
-        const t = db.letters.find((l) => l.id === id);
+        const t = social.letters.find((l) => l.id === id);
+        if (!t) return;
         if (t.open_when && !t.opened_at && !window.confirm(`This letter is for when ${t.open_when}. Open it now?`)) return;
         if (!t.opened_at && t.recipient_id === "me") {
-          t.opened_at = new Date().toISOString();
-          refresh();
+          t.opened_at = new Date().toISOString(); // show it as opened straight away, then tell Supabase
+          render();
+          sb.from("letters").update({ opened_at: t.opened_at }).eq("id", id).then(({ error }) => error && toast("Couldn’t mark that letter as opened."));
         }
         dlg = { action: "read-letter", target: id };
         return renderDialog();
       }
       case "letter-save": {
-        const t = db.letters.find((l) => l.id === id);
+        const t = social.letters.find((l) => l.id === id);
+        if (!t) return;
         t.saved = !t.saved;
-        refresh();
-        return renderDialog();
+        render();
+        renderDialog();
+        return sb.from("letters").update({ saved: t.saved }).eq("id", id).then(({ error }) => {
+          if (!error) return;
+          t.saved = !t.saved;
+          render();
+          renderDialog();
+          toast("Couldn’t update your memory box just now.");
+        });
       }
       case "moment-delete":
         if (!window.confirm("Delete this moment for everyone?")) return;
@@ -1147,7 +1225,9 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
         ui.chatWith = id;
         return render();
       case "notif-read":
-        db.notifications.find((n) => n.id === id).read_at = new Date().toISOString();
+        const local = (db.notifications || []).find((n) => n.id === id);
+        if (local) local.read_at = new Date().toISOString();
+        else db.readNotifs = [...(db.readNotifs || []), id].slice(-300);
         return refresh();
     }
   }
@@ -1191,9 +1271,18 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     if (form.dataset.form === "chat") {
       const body = form.body.value.trim();
       if (!body || !db.user) return;
-      db.messages.push({ id: uid(), sender_id: "me", recipient_id: form.dataset.id, body, created_at: new Date().toISOString() });
-      refresh();
+      const draft = { id: `tmp-${uid()}`, sender_id: "me", recipient_id: form.dataset.id, body: body.slice(0, 4000), created_at: new Date().toISOString() };
+      social.messages.push(draft);
+      render();
       document.querySelector(".chat-compose input")?.focus();
+      sb.from("messages")
+        .insert({ recipient_id: draft.recipient_id, body: draft.body })
+        .then(({ error }) => {
+          if (!error) return;
+          social.messages = social.messages.filter((m) => m !== draft);
+          redrawKeepingTyping();
+          toast("That message didn’t send. Check your connection and try again.");
+        });
     }
   });
 

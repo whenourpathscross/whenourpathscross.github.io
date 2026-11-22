@@ -271,3 +271,16 @@ form[data-form="auth"] > div:last-child { margin: calc(var(--s2) - var(--s3)) 0 
   pointer-events: none; /* clicks fall through to the box */
 }
 .input-prefix input { width: 100%; padding-left: 31px; }
+
+/* ---------- Bell: a small dot when something new is waiting ---------- */
+.bell { position: relative; }
+.bell-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 2px var(--background);
+}
