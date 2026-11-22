@@ -54,3 +54,6 @@ This applies to every pop-up, not only sign-in. On phones the card edge steps do
 ## Movable calendar and read ticks (round 5)
 - My availability has ← → arrows to move between weeks, and you can click any day. The lists below show that day: your free time, friends' free time, and "Add free time" opens on that date. Purple and green dots still show which days have something.
 - Your chat messages show a clock while sending, ✓ once sent, and a purple ✓✓ once your friend has read them.
+
+## Chat time position (round 6)
+- The time (and your ✓/✓✓) now sits at the end of the message, like Telegram and WhatsApp: on the same line for short messages, bottom-right of the last line for long ones.

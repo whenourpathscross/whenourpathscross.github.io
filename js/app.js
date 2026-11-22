@@ -698,7 +698,7 @@ ${list.length
   <div class="chat-friends">${data.friends.map((e) => btn({ variant: e.id === d ? "secondary" : "ghost", cls: "w-full justify-start h-auto py-3", attrs: `data-act="chat-with" data-id="${e.id}"`, html: `${avatar(e.display_name)}${esc(e.display_name)}${unread.get(e.id) && e.id !== d ? `<span class="chat-unread" aria-label="${unread.get(e.id)} unread">${unread.get(e.id)}</span>` : ""}` })).join("")}</div>
   <div class="chat-main">
     <div class="chat-header">${avatar(f.display_name)}<strong class="flex-1">${esc(f.display_name)}</strong>${btn({ size: "icon", variant: "ghost", attrs: `title="Send a letter" data-open="letter" data-target="${d}"`, html: icon("mail") })}${btn({ size: "icon", variant: "ghost", attrs: `title="Suggest a catch-up" data-open="invite" data-target="${d}"`, html: icon("calendar-days") })}</div>
-    <div class="chat-bubbles" id="chat-bubbles">${msgs.map((e) => `<div class="message ${e.sender_id === "me" ? "own" : ""}"><p>${esc(e.body)}</p><small>${timeFmt(e.created_at)}${e.sender_id === "me" ? ticks(e) : ""}</small></div>`).join("")}</div>
+    <div class="chat-bubbles" id="chat-bubbles">${msgs.map((e) => `<div class="message ${e.sender_id === "me" ? "own" : ""}"><p>${esc(e.body)}<small>${timeFmt(e.created_at)}${e.sender_id === "me" ? ticks(e) : ""}</small></p></div>`).join("")}</div>
     <form class="chat-compose" data-form="chat" data-id="${d}"><input aria-label="Message" placeholder="A little hello…" name="body" maxlength="4000" autocomplete="off">${btn({ size: "icon", type: "submit", attrs: 'aria-label="Send message" disabled', html: icon("send") })}</form>
   </div>
 </div>`;
