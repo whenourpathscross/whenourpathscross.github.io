@@ -50,3 +50,7 @@ This applies to every pop-up, not only sign-in. On phones the card edge steps do
 ## Chat notifications and shared free time (round 4)
 - Unread chats work like the mailbox: a dot next to Chats, an unread count beside the friend, and "X sent you 2 messages" on the bell. Opening the chat clears them.
 - My availability now shows your friends' free time, with a "Suggest a catch-up" button that pre-fills the friend and time. The week strip marks days when you (purple) or a friend (green) are free.
+
+## Movable calendar and read ticks (round 5)
+- My availability has ← → arrows to move between weeks, and you can click any day. The lists below show that day: your free time, friends' free time, and "Add free time" opens on that date. Purple and green dots still show which days have something.
+- Your chat messages show a clock while sending, ✓ once sent, and a purple ✓✓ once your friend has read them.

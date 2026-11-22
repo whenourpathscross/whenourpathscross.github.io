@@ -324,6 +324,11 @@
     };
   }
 
+  const ticks = (m) =>
+    m.id.startsWith("tmp-")
+      ? `<span class="tick" role="img" aria-label="Sending">${icon("clock")}</span>`
+      : `<span class="tick${m.read_at ? " read" : ""}" role="img" aria-label="${m.read_at ? "Read" : "Sent"}">${icon(m.read_at ? "check-check" : "check")}</span>`;
+
   // friend id -> number of messages from them you haven't opened yet
   function unreadFrom(data) {
     const ids = new Set((data.friends || []).map((f) => f.id));
@@ -580,9 +585,16 @@ ${btn({ variant: "ghost", size: "icon", attrs: `title="Block friend" data-act="f
 
   function availabilityPage(data) {
     const t = new Date();
-    const days = Array.from({ length: 7 }, (_, n) => new Date(t.getFullYear(), t.getMonth(), t.getDate() + n));
-    const mine = data ? data.slots.filter((s) => s.user_id === "me") : [];
-    const theirs = data ? data.slots.filter((s) => s.user_id !== "me" && new Date(s.ends_at) > Date.now()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at)) : [];
+    const days = Array.from({ length: 7 }, (_, n) => new Date(t.getFullYear(), t.getMonth(), t.getDate() + ui.weekOffset * 7 + n));
+    const ymd = (d) => d.toLocaleDateString("en-CA");
+    const day = days.find((d) => ymd(d) === ui.day) || days[0];
+    const dayName = day.toLocaleDateString([], { weekday: "long", day: "numeric", month: "short" });
+    const allMine = data ? data.slots.filter((s) => s.user_id === "me") : [];
+    const allTheirs = data ? data.slots.filter((s) => s.user_id !== "me" && new Date(s.ends_at) > Date.now()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at)) : [];
+    const sameDay = (s) => new Date(s.starts_at).toDateString() === day.toDateString();
+    const mine = allMine.filter(sameDay);
+    const theirs = allTheirs.filter(sameDay);
+    const weekLabel = ui.weekOffset === 0 ? "This week" : ui.weekOffset === 1 ? "Next week" : `${days[0].toLocaleDateString([], { day: "numeric", month: "short" })} – ${days[6].toLocaleDateString([], { day: "numeric", month: "short" })}`;
     const onDay = (list, d) => list.some((s) => new Date(s.starts_at).toDateString() === d.toDateString());
     const localInput = (iso) => new Date(new Date(iso) - new Date(iso).getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
     const friendName = (id) => data?.friends.find((f) => f.id === id)?.display_name;
@@ -590,10 +602,12 @@ ${btn({ variant: "ghost", size: "icon", attrs: `title="Block friend" data-act="f
       eyebrow: "CROSSPATHS",
       title: "A little time, together",
       subtitle: "Leave a little space for something spontaneous.",
-      action: btn({ attrs: 'data-open="availability"', html: `${icon("plus")}Add free time` }),
+      action: btn({ attrs: `data-open="availability" data-start="${ymd(day)}"`, html: `${icon("plus")}Add free time` }),
     })}
-<div class="week-strip">${days.map((d, i) => `<div class="week-day ${i === 0 ? "today" : ""}">${d.toLocaleDateString([], { weekday: "short" })}<strong>${d.getDate()}</strong><span class="day-dots">${onDay(mine, d) ? '<i class="dot-me" title="You’re free"></i>' : ""}${onDay(theirs, d) ? '<i class="dot-friend" title="A friend is free"></i>' : ""}</span></div>`).join("")}</div>
-${theirs.length ? '<p class="quiet-note day-legend"><i class="dot-me"></i> You’re free <i class="dot-friend"></i> A friend is free</p>' : ""}
+<div class="week-nav">${btn({ size: "icon", variant: "ghost", attrs: `data-act="week" data-id="-1" aria-label="Previous week"${ui.weekOffset === 0 ? " disabled" : ""}`, html: icon("chevron-left") })}<strong>${weekLabel}</strong>${btn({ size: "icon", variant: "ghost", attrs: 'data-act="week" data-id="1" aria-label="Next week"', html: icon("chevron-right") })}</div>
+<div class="week-strip">${days.map((d) => `<button type="button" class="week-day${d === day ? " selected" : ""}${ymd(d) === ymd(t) ? " is-today" : ""}" data-act="pick-day" data-id="${ymd(d)}" aria-pressed="${d === day}">${d.toLocaleDateString([], { weekday: "short" })}<strong>${d.getDate()}</strong><span class="day-dots">${onDay(allMine, d) ? '<i class="dot-me" title="You’re free"></i>' : ""}${onDay(allTheirs, d) ? '<i class="dot-friend" title="A friend is free"></i>' : ""}</span></button>`).join("")}</div>
+<p class="quiet-note day-legend"><i class="dot-me"></i> You’re free <i class="dot-friend"></i> A friend is free</p>
+<h2 class="sub-heading">${dayName}</h2>
 ${mine.length
       ? `<div class="list-stack">${mine
           .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at))
@@ -601,7 +615,7 @@ ${mine.length
             (s) => `<div class="list-row">${icon("calendar-days", "text-primary")}<div class="list-row-main"><strong>${new Date(s.starts_at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – ${timeFmt(s.ends_at)}</strong><p>${esc(s.location || "Somewhere familiar")} · ${s.visible ? "Shared with friends" : "Only you"}</p></div>${btn({ variant: "ghost", size: "icon", attrs: `title="Delete period" data-act="slot-delete" data-id="${s.id}"`, html: icon("trash-2") })}</div>`
           )
           .join("")}</div>`
-      : emptyState({ title: "What does your week look like?", text: "A spare half-hour can become your favourite part of the day.", action: btn({ attrs: 'data-open="availability"', html: `${icon("plus")}Add a little free time` }) })}
+      : emptyState({ title: `Free on ${day.toLocaleDateString([], { weekday: "long" })}?`, text: "A spare half-hour can become your favourite part of the day.", action: btn({ attrs: `data-open="availability" data-start="${ymd(day)}"`, html: `${icon("plus")}Add a little free time` }) })}
 <h2 class="sub-heading">Your friends’ free time</h2>
 ${theirs.length
       ? `<div class="list-stack">${theirs
@@ -609,7 +623,7 @@ ${theirs.length
             (s) => `<div class="list-row">${avatar(friendName(s.user_id))}<div class="list-row-main"><strong>${esc(friendName(s.user_id) || "A friend")} · ${new Date(s.starts_at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – ${timeFmt(s.ends_at)}</strong><p>${esc(s.location || "Somewhere familiar")}</p></div>${btn({ size: "sm", variant: "outline", attrs: `data-open="invite" data-target="${s.user_id}" data-start="${localInput(s.starts_at)}"`, html: "Suggest a catch-up" })}</div>`
           )
           .join("")}</div>`
-      : `<p class="quiet-note">None of your friends have shared free time this week yet.</p>`}
+      : `<p class="quiet-note">No friends have shared free time on this day${allTheirs.length ? " (the green dots show when they’re free)" : ""}.</p>`}
 <h2 class="sub-heading">Upcoming catch-ups &amp; invitations</h2>
 ${(data?.invites || []).length ? "" : `<p class="quiet-note">No catch-ups planned yet. Suggest one from a friend’s chat ♡</p>`}
 <div class="list-stack">${(data?.invites || [])
@@ -623,7 +637,7 @@ ${(data?.invites || []).length ? "" : `<p class="quiet-note">No catch-ups planne
       .join("")}</div>`;
   }
 
-  const ui = { mailTab: "Inbox", openLetter: null, chatWith: "" };
+  const ui = { mailTab: "Inbox", openLetter: null, chatWith: "", weekOffset: 0, day: "" };
 
   function mailboxPage(data) {
     const tab = ui.mailTab;
@@ -684,7 +698,7 @@ ${list.length
   <div class="chat-friends">${data.friends.map((e) => btn({ variant: e.id === d ? "secondary" : "ghost", cls: "w-full justify-start h-auto py-3", attrs: `data-act="chat-with" data-id="${e.id}"`, html: `${avatar(e.display_name)}${esc(e.display_name)}${unread.get(e.id) && e.id !== d ? `<span class="chat-unread" aria-label="${unread.get(e.id)} unread">${unread.get(e.id)}</span>` : ""}` })).join("")}</div>
   <div class="chat-main">
     <div class="chat-header">${avatar(f.display_name)}<strong class="flex-1">${esc(f.display_name)}</strong>${btn({ size: "icon", variant: "ghost", attrs: `title="Send a letter" data-open="letter" data-target="${d}"`, html: icon("mail") })}${btn({ size: "icon", variant: "ghost", attrs: `title="Suggest a catch-up" data-open="invite" data-target="${d}"`, html: icon("calendar-days") })}</div>
-    <div class="chat-bubbles" id="chat-bubbles">${msgs.map((e) => `<div class="message ${e.sender_id === "me" ? "own" : ""}"><p>${esc(e.body)}</p><small>${timeFmt(e.created_at)}</small></div>`).join("")}</div>
+    <div class="chat-bubbles" id="chat-bubbles">${msgs.map((e) => `<div class="message ${e.sender_id === "me" ? "own" : ""}"><p>${esc(e.body)}</p><small>${timeFmt(e.created_at)}${e.sender_id === "me" ? ticks(e) : ""}</small></div>`).join("")}</div>
     <form class="chat-compose" data-form="chat" data-id="${d}"><input aria-label="Message" placeholder="A little hello…" name="body" maxlength="4000" autocomplete="off">${btn({ size: "icon", type: "submit", attrs: 'aria-label="Send message" disabled', html: icon("send") })}</form>
   </div>
 </div>`;
@@ -766,7 +780,7 @@ ${btn({ type: "submit", cls: "h-11", html: `${mode === "signup" ? "Create my lit
     const tomorrow = new Date(Date.now() + 864e5).toLocaleDateString("en-CA");
     let body = "";
     if (a === "availability")
-      body = `${field("Day", `name="date" type="date" required min="${new Date().toLocaleDateString("en-CA")}" value="${tomorrow}"`)}
+      body = `${field("Day", `name="date" type="date" required min="${new Date().toLocaleDateString("en-CA")}" value="${d.start || tomorrow}"`)}
 <div class="form-row">${field("From", 'name="start" type="time" required value="15:00"')}${field("Until", 'name="end" type="time" required value="16:00"')}</div>
 ${field("Around… (optional)", 'name="location" maxlength="120" placeholder="Campus, a café, your neighbourhood"')}
 <label class="flex items-center gap-2 text-xs"><input name="visible" type="checkbox" checked>Share this time with accepted friends</label>
@@ -1228,6 +1242,13 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       case "invite-accept":
       case "invite-decline":
         return socialChange(() => sb.from("invites").update({ status: name === "invite-accept" ? "accepted" : "declined" }).eq("id", id), name === "invite-accept" ? "See you there ♡" : "Maybe another time");
+      case "week":
+        ui.weekOffset = Math.max(0, ui.weekOffset + Number(id));
+        ui.day = ""; // first day of the new week (today on this week)
+        return render();
+      case "pick-day":
+        ui.day = id;
+        return render();
       case "mail-tab":
         ui.mailTab = id;
         return render();
@@ -1316,8 +1337,13 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       document.querySelector(".chat-compose input")?.focus();
       sb.from("messages")
         .insert({ recipient_id: draft.recipient_id, body: draft.body })
-        .then(({ error }) => {
-          if (!error) return;
+        .select("id")
+        .single()
+        .then(({ data: saved, error }) => {
+          if (!error) {
+            draft.id = saved.id; // clock -> single tick as soon as Supabase confirms
+            return redrawKeepingTyping();
+          }
           social.messages = social.messages.filter((m) => m !== draft);
           redrawKeepingTyping();
           toast("That message didn’t send. Check your connection and try again.");

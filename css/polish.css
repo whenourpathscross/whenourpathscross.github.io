@@ -307,3 +307,21 @@ form[data-form="auth"] > div:last-child { margin: calc(var(--s2) - var(--s3)) 0 
 .dot-friend { background: oklch(0.7 0.12 160); }
 .day-legend { display: flex; align-items: center; gap: 6px; margin-top: -8px; }
 .day-legend .dot-friend { margin-left: 8px; }
+
+/* ---------- Calendar: move between weeks, pick a day ---------- */
+.week-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 21px; }
+.week-nav strong { font: 500 16px var(--font-display); }
+.week-strip { margin-top: 8px; }
+button.week-day { font: inherit; color: inherit; cursor: pointer; transition: background-color 0.15s var(--ease-out), border-color 0.15s var(--ease-out), transform 0.1s var(--ease-out); }
+button.week-day:hover { border-color: color-mix(in oklch, var(--primary) 30%, var(--border)); }
+button.week-day:active { transform: scale(0.97); }
+button.week-day:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.week-day.selected { background: var(--lavender); border-color: color-mix(in oklch, var(--primary) 35%, var(--border)); }
+.week-day.is-today strong { color: var(--primary); }
+
+/* ---------- Chat ticks ---------- */
+.message small { display: flex; align-items: center; gap: 4px; }
+.message.own small { justify-content: flex-end; }
+.tick { display: inline-flex; opacity: 0.7; }
+.tick svg { width: 14px; height: 14px; }
+.tick.read { color: var(--primary); opacity: 1; }
