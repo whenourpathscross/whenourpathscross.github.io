@@ -189,7 +189,7 @@
       sb.from("slots").select("id, user_id, starts_at, ends_at, location, visible").gte("ends_at", since).order("starts_at"),
       sb.from("letters").select("id, sender_id, recipient_id, title, body, stationery, open_when, delivered_at, opened_at, saved, created_at").order("created_at", { ascending: false }).limit(200),
       // shortcut: newest 500 messages across all chats, add per-chat paging if chats get long
-      sb.from("messages").select("id, sender_id, recipient_id, body, created_at").order("created_at", { ascending: false }).limit(500),
+      sb.from("messages").select("id, sender_id, recipient_id, body, created_at, read_at").order("created_at", { ascending: false }).limit(500),
       sb.from("invites").select("id, sender_id, recipient_id, starts_at, ends_at, location, status, created_at").gte("ends_at", since).order("starts_at"),
     ]);
     for (const r of [fr, mo, sl, le, me, iv]) if (r.error) throw r.error;
@@ -324,6 +324,14 @@
     };
   }
 
+  // friend id -> number of messages from them you haven't opened yet
+  function unreadFrom(data) {
+    const ids = new Set((data.friends || []).map((f) => f.id));
+    const out = new Map();
+    for (const m of data.messages) if (m.recipient_id === "me" && !m.read_at && ids.has(m.sender_id)) out.set(m.sender_id, (out.get(m.sender_id) || 0) + 1);
+    return out;
+  }
+
   /* notifications aren't stored: they're worked out from requests, letters and invites waiting for you */
   function notificationsFor(friendships, blocked) {
     const name = (id) => social.profiles[id]?.display_name || "A friend";
@@ -332,6 +340,10 @@
       ...friendships.filter((f) => f.status === "pending" && f.recipient_id === "me").map((f) => ({ id: `fr-${f.id}`, body: `${name(f.requester_id)} would love to be friends ♡`, created_at: f.created_at, to: "friends" })),
       ...social.letters.filter((l) => l.recipient_id === "me" && !l.opened_at && !blocked.has(l.sender_id)).map((l) => ({ id: `lt-${l.id}`, body: `A little letter from ${name(l.sender_id)} is waiting 💌`, created_at: l.delivered_at, to: "mailbox" })),
       ...social.invites.filter((i) => i.recipient_id === "me" && i.status === "pending").map((i) => ({ id: `iv-${i.id}`, body: `${name(i.sender_id)} suggested a catch-up on ${new Date(i.starts_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`, created_at: i.created_at, to: "availability" })),
+      ...[...unreadFrom({ friends: friendships.filter((f) => f.status === "accepted").map((f) => ({ id: otherOf(f) })), messages: social.messages })].map(([id, n]) => {
+        const last = social.messages.filter((m) => m.sender_id === id && !m.read_at).at(-1);
+        return { id: `ch-${last.id}`, body: `${name(id)} sent you ${n === 1 ? "a message" : n + " messages"} 💬`, created_at: last.created_at, to: "chats" };
+      }),
       ...social.invites.filter((i) => i.sender_id === "me" && i.status !== "pending").map((i) => ({ id: `ia-${i.id}-${i.status}`, body: `${name(i.recipient_id)} ${i.status} your catch-up`, created_at: i.created_at, to: "availability" })),
       ...(db.notifications || []).filter((n) => !["n1", "n2", "n3"].includes(n.id)), // n1–n3 were old sample ones
     ];
@@ -370,7 +382,7 @@
     `<div class="brand"><svg class="brand-mark" viewBox="0 0 44 48" fill="none" aria-hidden="true"><path d="M8 43C8 24 32 28 32 8M36 43C36 24 12 28 12 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 4"></path><path d="M22 18C10 9 15 1 22 7C29 1 34 9 22 18Z" fill="currentColor"></path></svg><div><div class="brand-name">When Our<br>Paths Cross <span class="text-primary">♡</span></div></div></div>`;
 
   function navLink(n, data) {
-    const unread = n.page === "mailbox" && data && data.letters.some((l) => !l.opened_at && l.recipient_id === "me");
+    const unread = data && ((n.page === "mailbox" && data.letters.some((l) => !l.opened_at && l.recipient_id === "me")) || (n.page === "chats" && unreadFrom(data).size));
     return `<a href="${href(n.to)}" class="nav-link ${PAGE === n.page ? "active" : ""}"${PAGE === n.page ? ' aria-current="page"' : ""}>${icon(n.icon)}<span>${n.label}</span>${unread ? '<span class="ml-auto text-xs">●</span>' : ""}</a>`;
   }
 
@@ -570,6 +582,9 @@ ${btn({ variant: "ghost", size: "icon", attrs: `title="Block friend" data-act="f
     const t = new Date();
     const days = Array.from({ length: 7 }, (_, n) => new Date(t.getFullYear(), t.getMonth(), t.getDate() + n));
     const mine = data ? data.slots.filter((s) => s.user_id === "me") : [];
+    const theirs = data ? data.slots.filter((s) => s.user_id !== "me" && new Date(s.ends_at) > Date.now()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at)) : [];
+    const onDay = (list, d) => list.some((s) => new Date(s.starts_at).toDateString() === d.toDateString());
+    const localInput = (iso) => new Date(new Date(iso) - new Date(iso).getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
     const friendName = (id) => data?.friends.find((f) => f.id === id)?.display_name;
     return `${pageHeader({
       eyebrow: "CROSSPATHS",
@@ -577,7 +592,8 @@ ${btn({ variant: "ghost", size: "icon", attrs: `title="Block friend" data-act="f
       subtitle: "Leave a little space for something spontaneous.",
       action: btn({ attrs: 'data-open="availability"', html: `${icon("plus")}Add free time` }),
     })}
-<div class="week-strip">${days.map((d, i) => `<div class="week-day ${i === 0 ? "today" : ""}">${d.toLocaleDateString([], { weekday: "short" })}<strong>${d.getDate()}</strong></div>`).join("")}</div>
+<div class="week-strip">${days.map((d, i) => `<div class="week-day ${i === 0 ? "today" : ""}">${d.toLocaleDateString([], { weekday: "short" })}<strong>${d.getDate()}</strong><span class="day-dots">${onDay(mine, d) ? '<i class="dot-me" title="You’re free"></i>' : ""}${onDay(theirs, d) ? '<i class="dot-friend" title="A friend is free"></i>' : ""}</span></div>`).join("")}</div>
+${theirs.length ? '<p class="quiet-note day-legend"><i class="dot-me"></i> You’re free <i class="dot-friend"></i> A friend is free</p>' : ""}
 ${mine.length
       ? `<div class="list-stack">${mine
           .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at))
@@ -586,6 +602,14 @@ ${mine.length
           )
           .join("")}</div>`
       : emptyState({ title: "What does your week look like?", text: "A spare half-hour can become your favourite part of the day.", action: btn({ attrs: 'data-open="availability"', html: `${icon("plus")}Add a little free time` }) })}
+<h2 class="sub-heading">Your friends’ free time</h2>
+${theirs.length
+      ? `<div class="list-stack">${theirs
+          .map(
+            (s) => `<div class="list-row">${avatar(friendName(s.user_id))}<div class="list-row-main"><strong>${esc(friendName(s.user_id) || "A friend")} · ${new Date(s.starts_at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – ${timeFmt(s.ends_at)}</strong><p>${esc(s.location || "Somewhere familiar")}</p></div>${btn({ size: "sm", variant: "outline", attrs: `data-open="invite" data-target="${s.user_id}" data-start="${localInput(s.starts_at)}"`, html: "Suggest a catch-up" })}</div>`
+          )
+          .join("")}</div>`
+      : `<p class="quiet-note">None of your friends have shared free time this week yet.</p>`}
 <h2 class="sub-heading">Upcoming catch-ups &amp; invitations</h2>
 ${(data?.invites || []).length ? "" : `<p class="quiet-note">No catch-ups planned yet. Suggest one from a friend’s chat ♡</p>`}
 <div class="list-stack">${(data?.invites || [])
@@ -653,9 +677,11 @@ ${list.length
       return header + emptyState({ title: "Your people, one little hello away", text: "Add a friend to start a private conversation.", action: btn({ attrs: 'data-open="friends"', html: `${icon("user-plus")}Find a friend` }) });
     const d = data.friends.some((f) => f.id === ui.chatWith) ? ui.chatWith : data.friends[0].id;
     const f = data.friends.find((x) => x.id === d);
+    ui.chatOpen = d;
+    const unread = unreadFrom(data);
     const msgs = data.messages.filter((m) => (m.sender_id === "me" && m.recipient_id === d) || (m.sender_id === d && m.recipient_id === "me"));
     return `${header}<div class="chat-layout">
-  <div class="chat-friends">${data.friends.map((e) => btn({ variant: e.id === d ? "secondary" : "ghost", cls: "w-full justify-start h-auto py-3", attrs: `data-act="chat-with" data-id="${e.id}"`, html: `${avatar(e.display_name)}${esc(e.display_name)}` })).join("")}</div>
+  <div class="chat-friends">${data.friends.map((e) => btn({ variant: e.id === d ? "secondary" : "ghost", cls: "w-full justify-start h-auto py-3", attrs: `data-act="chat-with" data-id="${e.id}"`, html: `${avatar(e.display_name)}${esc(e.display_name)}${unread.get(e.id) && e.id !== d ? `<span class="chat-unread" aria-label="${unread.get(e.id)} unread">${unread.get(e.id)}</span>` : ""}` })).join("")}</div>
   <div class="chat-main">
     <div class="chat-header">${avatar(f.display_name)}<strong class="flex-1">${esc(f.display_name)}</strong>${btn({ size: "icon", variant: "ghost", attrs: `title="Send a letter" data-open="letter" data-target="${d}"`, html: icon("mail") })}${btn({ size: "icon", variant: "ghost", attrs: `title="Suggest a catch-up" data-open="invite" data-target="${d}"`, html: icon("calendar-days") })}</div>
     <div class="chat-bubbles" id="chat-bubbles">${msgs.map((e) => `<div class="message ${e.sender_id === "me" ? "own" : ""}"><p>${esc(e.body)}</p><small>${timeFmt(e.created_at)}</small></div>`).join("")}</div>
@@ -782,7 +808,7 @@ ${field("Current mood", `name="mood" value="${esc(f.mood ?? "")}" placeholder="I
 ${btn({ variant: "outline", attrs: 'data-act="sign-out"', html: "Sign out" })}`;
     if (a === "invite")
       body = `${friendSelect}
-${field("When shall we meet?", 'name="start" type="datetime-local" required')}
+${field("When shall we meet?", `name="start" type="datetime-local" required value="${esc(d.start || "")}"`)}
 <label class="form-field"><span>A little time together</span><select name="duration"><option value="15">15 minutes</option><option value="20">20 minutes</option><option value="25">25 minutes</option><option value="30">30 minutes</option></select></label>
 ${field("Meet around…", 'name="location" placeholder="A café or somewhere familiar"')}`;
     const submitLabel = a === "letter" ? "Seal with a little love" : a === "moment" ? "Keep this moment" : a === "invite" ? "Send a little invitation" : "Save";
@@ -865,8 +891,8 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     (again || host.querySelector("input:not([type=hidden]),select,textarea,[role=dialog]"))?.focus({ preventScroll: true });
   }
 
-  function openDialog(action, target = "") {
-    dlg = { action, target, mode: "login", error: "", status: "", stationery: "pink", results: [] };
+  function openDialog(action, target = "", start = "") {
+    dlg = { action, target, start, mode: "login", error: "", status: "", stationery: "pink", results: [] };
     renderDialog();
   }
   function closeDialog() {
@@ -920,7 +946,20 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
     document.getElementById("app").innerHTML = shell(page(data), data);
     const bubbles = document.getElementById("chat-bubbles");
     if (bubbles) bubbles.scrollTop = bubbles.scrollHeight;
+    if (PAGE === "chats") markChatRead();
   }
+
+  // opening a chat (while the tab is actually visible) marks that friend's messages as read
+  function markChatRead() {
+    if (document.visibilityState !== "visible" || !ui.chatOpen) return;
+    const now = new Date().toISOString();
+    const fresh = social.messages.filter((m) => m.sender_id === ui.chatOpen && m.recipient_id === "me" && !m.read_at);
+    if (!fresh.length) return;
+    fresh.forEach((m) => (m.read_at = now));
+    sb.from("messages").update({ read_at: now }).in("id", fresh.map((m) => m.id)).then(() => {});
+    setTimeout(render); // clear the dots now rather than on the next live update
+  }
+  document.addEventListener("visibilitychange", () => PAGE === "chats" && markChatRead());
   const refresh = () => {
     save();
     render();
@@ -1239,7 +1278,7 @@ ${field("Meet around…", 'name="location" placeholder="A café or somewhere fam
       e.preventDefault();
       const r = opener.getBoundingClientRect();
       lastTrigger = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-      return openDialog(opener.dataset.open, opener.dataset.target || "");
+      return openDialog(opener.dataset.open, opener.dataset.target || "", opener.dataset.start || "");
     }
     const a = e.target.closest("[data-act]");
     if (a && !a.disabled) {

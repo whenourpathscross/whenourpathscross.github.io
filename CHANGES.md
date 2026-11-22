@@ -46,3 +46,7 @@ This applies to every pop-up, not only sign-in. On phones the card edge steps do
 - "Deliver later" letters now really arrive at the chosen time.
 - Notifications come from what actually happened: friend requests, letters waiting, invites, and replies to your invites. The bell shows a dot when something is new.
 - Overlapping free time with a friend shows up on the home page as a match.
+
+## Chat notifications and shared free time (round 4)
+- Unread chats work like the mailbox: a dot next to Chats, an unread count beside the friend, and "X sent you 2 messages" on the bell. Opening the chat clears them.
+- My availability now shows your friends' free time, with a "Suggest a catch-up" button that pre-fills the friend and time. The week strip marks days when you (purple) or a friend (green) are free.

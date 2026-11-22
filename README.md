@@ -11,7 +11,7 @@ Accounts and data are stored in a free Supabase project (`Connections`, region a
 - **`profiles`**: each account's username, display name and bio. Any signed-in member can search them (no emails are exposed). Usernames are unique.
 - **`friendships`**: friend requests. Only the two people involved can see one, only the recipient can accept or decline, and either person can remove it.
 - **`moments`**: posts. You see your own, plus posts an *accepted* friend chose to share with you ("Share with" when posting; everyone is ticked by default).
-- **`messages`**: chats. Only the two people in a chat can read it, and you can only message accepted friends.
+- **`messages`**: chats. Only the two people in a chat can read it, and you can only message accepted friends. The recipient marks messages read when they open the chat (unread dots on Chats, the friend, and the bell).
 - **`letters`**: letters to friends. A "deliver later" letter stays hidden from the recipient until its delivery time. Only the recipient can mark it opened or saved.
 - **`invites`**: catch-up invites. Only the recipient can accept or decline.
 - **`slots`**: free time. Friends see it when you tick "visible" and keep "Share my free time" on in your profile.
@@ -23,7 +23,6 @@ Accounts and data are stored in a free Supabase project (`Connections`, region a
 
 ## Not done yet
 - Photos are stored inside the database as text (up to ~2 MB each). Move them to Supabase Storage if people post a lot.
-- Unread chat messages don't show on the bell.
 - Google sign-in and password-reset emails aren't switched on.
 - Free Supabase projects pause after a week with no activity. Open the dashboard before a demo.
 
